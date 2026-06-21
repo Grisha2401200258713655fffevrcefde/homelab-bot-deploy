@@ -1288,11 +1288,19 @@ async def generate_dashboard():
         else:
             creds = '<div class="creds"><span class="label">🔓 Без авторизации</span></div>'
         badge = "● Работает" if card_class=="up" else "● Упал"
+        name = c["name"]
+        mgmt = f"""<div class="mgmt">
+  <button onclick="doAction('restart','{name}')" class="mbtn restart">🔄 Рестарт</button>
+  <button onclick="doAction('stop','{name}')" class="mbtn stop">⏹ Стоп</button>
+  <button onclick="doAction('remove','{name}')" class="mbtn remove" onclick="return confirm('Удалить {name}?')">🗑 Удалить</button>
+  <button onclick="doAction('logs','{name}')" class="mbtn logs">📋 Логи</button>
+</div>"""
         return f"""<div class="card {card_class}">
-  <div class="card-top"><span class="name">{c["name"]}</span><span class="badge {card_class}">{badge}</span></div>
+  <div class="card-top"><span class="name">{name}</span><span class="badge {card_class}">{badge}</span></div>
   <div class="img-tag">{c["img"]}</div>
   <div class="status">{c["status"]}</div>
   {creds}{url_btn}
+  {mgmt}
 </div>"""
 
     def saved_card(s):
@@ -1362,7 +1370,71 @@ code{{background:#21262d;padding:2px 6px;border-radius:4px;font-family:monospace
 .btn{{display:inline-block;padding:8px 16px;border-radius:8px;text-decoration:none;font-size:13px;font-weight:500;background:#1f6feb;color:#fff;margin-right:8px}}
 .btn:hover{{background:#388bfd}}.btn-gh{{background:#21262d;color:#e6edf3}}.btn-gh:hover{{background:#30363d}}
 .empty{{color:#484f58;font-style:italic;padding:20px;text-align:center;background:#161b22;border-radius:12px;border:1px solid #30363d}}
-</style></head><body>
+.mgmt{{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;padding-top:12px;border-top:1px solid #30363d}}
+.mbtn{{padding:6px 12px;border-radius:6px;border:none;cursor:pointer;font-size:12px;font-weight:500;transition:all 0.2s}}
+.mbtn.restart{{background:#1f4788;color:#79c0ff}}.mbtn.restart:hover{{background:#1f6feb}}
+.mbtn.stop{{background:#3d2800;color:#d29922}}.mbtn.stop:hover{{background:#5a3e00}}
+.mbtn.remove{{background:#3d0c0c;color:#f85149}}.mbtn.remove:hover{{background:#5a1010}}
+.mbtn.logs{{background:#21262d;color:#8b949e}}.mbtn.logs:hover{{background:#30363d;color:#e6edf3}}
+.modal{{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.7);z-index:1000;align-items:center;justify-content:center}}
+.modal.active{{display:flex}}
+.modal-box{{background:#161b22;border:1px solid #30363d;border-radius:12px;padding:24px;max-width:600px;width:90%;max-height:80vh;overflow:auto}}
+.modal-title{{font-size:16px;font-weight:600;margin-bottom:16px;color:#e6edf3;display:flex;justify-content:space-between}}
+.modal-close{{cursor:pointer;color:#8b949e;font-size:20px}}.modal-close:hover{{color:#e6edf3}}
+.modal-content{{font-family:monospace;font-size:12px;color:#8b949e;white-space:pre-wrap;background:#0d1117;padding:12px;border-radius:8px}}
+.toast{{position:fixed;bottom:24px;right:24px;background:#1f6feb;color:#fff;padding:12px 20px;border-radius:8px;font-size:14px;opacity:0;transition:opacity 0.3s;z-index:2000}}
+.toast.show{{opacity:1}}
+.toast.error{{background:#b91c1c}}
+.toast.success{{background:#166534}}
+</style>
+<script>
+const API = "http://192.168.31.178:8098";
+async function doAction(action, name) {{
+  if (action === "remove" && !confirm("Удалить контейнер " + name + "?")) return;
+  if (action === "logs") {{
+    showToast("Загружаю логи...");
+    try {{
+      const r = await fetch(API + "/logs/" + name);
+      const d = await r.json();
+      showModal("📋 Логи: " + name, d.logs || d.error || "Нет данных");
+    }} catch(e) {{ showToast("Ошибка: " + e, true); }}
+    return;
+  }}
+  showToast("Выполняю: " + action + " " + name + "...");
+  try {{
+    const r = await fetch(API + "/" + action + "/" + name, {{method:"POST"}});
+    const d = await r.json();
+    if (d.ok) {{
+      showToast("✅ " + action + " " + name, false, true);
+      setTimeout(() => location.reload(), 2000);
+    }} else {{
+      showToast("❌ " + (d.error || "Ошибка"), true);
+    }}
+  }} catch(e) {{
+    showToast("❌ Нет связи с API", true);
+  }}
+}}
+function showToast(msg, isError=false, isSuccess=false) {{
+  const t = document.getElementById("toast");
+  t.textContent = msg;
+  t.className = "toast show" + (isError?" error":(isSuccess?" success":""));
+  setTimeout(() => t.className = "toast", 3000);
+}}
+function showModal(title, content) {{
+  document.getElementById("modal-title").textContent = title;
+  document.getElementById("modal-content").textContent = content;
+  document.getElementById("modal").className = "modal active";
+}}
+function closeModal() {{ document.getElementById("modal").className = "modal"; }}
+</script>
+</head><body>
+<div id="modal" class="modal" onclick="if(event.target===this)closeModal()">
+  <div class="modal-box">
+    <div class="modal-title"><span id="modal-title"></span><span class="modal-close" onclick="closeModal()">✕</span></div>
+    <div class="modal-content" id="modal-content"></div>
+  </div>
+</div>
+<div id="toast" class="toast"></div>
 <div class="header"><h1>🤖 Homelab Dashboard</h1><div class="time">Обновлено: {now} · каждые 30с</div></div>
 <div class="wrap">
 <div class="stats">
@@ -1396,6 +1468,63 @@ code{{background:#21262d;padding:2px 6px;border-radius:4px;font-family:monospace
     return await loop.run_in_executor(None, write_file)
 
 # ── BACKGROUND TASKS ──────────────────────────────────────────────────────
+async def run_api_server(app):
+    """Простой HTTP API для управления контейнерами из dashboard."""
+    from aiohttp import web
+
+    async def handle_action(request):
+        action = request.match_info["action"]
+        name = request.match_info["name"]
+        loop = asyncio.get_event_loop()
+        headers = {"Access-Control-Allow-Origin":"*","Content-Type":"application/json"}
+
+        if action not in ("restart","stop","remove"):
+            return web.Response(text=json.dumps({"ok":False,"error":"Unknown action"}),headers=headers)
+
+        if action == "restart":
+            _,e,code = await loop.run_in_executor(None,lambda:pr(f"docker restart {name} 2>&1"))
+        elif action == "stop":
+            _,e,code = await loop.run_in_executor(None,lambda:pr(f"docker stop {name} 2>&1"))
+        elif action == "remove":
+            _,e,code = await loop.run_in_executor(None,lambda:pr(f"docker rm -f {name} 2>&1"))
+
+        if code == 0:
+            await app.bot.send_message(ADMIN_ID,
+                f"🖥 Dashboard: *{action}* `{name}`",
+                parse_mode="Markdown")
+            asyncio.create_task(generate_dashboard())
+            return web.Response(text=json.dumps({"ok":True}),headers=headers)
+        else:
+            return web.Response(text=json.dumps({"ok":False,"error":e[:200]}),headers=headers)
+
+    async def handle_logs(request):
+        name = request.match_info["name"]
+        loop = asyncio.get_event_loop()
+        headers = {"Access-Control-Allow-Origin":"*","Content-Type":"application/json"}
+        out,_,_ = await loop.run_in_executor(None,lambda:pr(f"docker logs {name} --tail 50 2>&1"))
+        return web.Response(text=json.dumps({"logs":out[-3000:]}),headers=headers)
+
+    async def handle_options(request):
+        headers = {
+            "Access-Control-Allow-Origin":"*",
+            "Access-Control-Allow-Methods":"GET,POST,OPTIONS",
+            "Access-Control-Allow-Headers":"Content-Type"
+        }
+        return web.Response(headers=headers)
+
+    webapp = web.Application()
+    webapp.router.add_post("/{action}/{name}", handle_action)
+    webapp.router.add_get("/logs/{name}", handle_logs)
+    webapp.router.add_route("OPTIONS","/{action}/{name}", handle_options)
+    webapp.router.add_route("OPTIONS","/logs/{name}", handle_options)
+
+    runner = web.AppRunner(webapp)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", 8098)
+    await site.start()
+    log.info("Dashboard API started on :8098")
+
+
 async def background_monitor(app):
     """Фоновый мониторинг — алерты о падении сервисов."""
     await asyncio.sleep(30)
@@ -1483,6 +1612,7 @@ async def post_init(app):
     asyncio.create_task(background_monitor(app))
     asyncio.create_task(background_digest(app))
     asyncio.create_task(background_weekly_trivy(app))
+    asyncio.create_task(run_api_server(app))
     log.info("Background tasks started")
 
 async def error_handler(update,context):
