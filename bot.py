@@ -457,6 +457,7 @@ async def cmd_start(update,ctx):
         [btn("🤖 Автопилот","ap:AUTO:x")],
         [btn("📋 Управление сервисами","ap:MANAGE:x")],
         [btn("📊 Статус серверов","ap:STATUS:x")],
+        [btn("🖥 Dashboard","ap:DASH:x")],
     ])
     await update.message.reply_text(
         "🤖 *Homelab Sentinel v6*\n\n"
@@ -562,7 +563,7 @@ async def _show_manage(message):
         parts=line.split("|"); name=parts[0]; img=parts[1]; status=parts[2]; ports=parts[3] if len(parts)>3 else ""
         port_match=re.search(r':(\d+)->',ports)
         port=port_match.group(1) if port_match else None
-        url=f"http://{PROD_HOST}:{port}" if port else None
+        url=f"http://{PROD_HOST}:{free_port}" if free_port else None
         lines.append(f"• *{name}*\n  `{img}`\n  {status}")
         row=[btn("🔄",f"mg:restart:{name}:x"),btn("⏹",f"mg:stop:{name}:x"),btn("🗑",f"mg:remove:{name}:x"),btn("📋",f"mg:logs:{name}:x")]
         if url: row.append(url_btn("🌐",url))
@@ -725,6 +726,20 @@ async def cmd_testall(update,ctx):
     await asyncio.gather(*[do_test(update.message,img,ver) for img,ver in items])
 
 @admin_only
+async def cmd_dashboard(update,ctx):
+    msg = await update.message.reply_text("🖥 Генерирую dashboard...")
+    ok = await generate_dashboard()
+    url = "http://192.168.31.178:8099"
+    if ok:
+        await msg.edit_text(
+            f"🖥 *Dashboard готов!*\n\n{url}",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🌐 Открыть Dashboard",url=url)]])
+        )
+    else:
+        await msg.edit_text("❌ Ошибка записи dashboard — проверь /opt/homelab/dashboard/")
+
+@admin_only
 async def cmd_reset(update,ctx):
     reset_seen()
     await update.message.reply_text("✅ Кэш сброшен — /search покажет всё заново")
@@ -817,7 +832,13 @@ async def do_deploy(message,image,version):
         except: pass
     await loop.run_in_executor(None,lambda:pr(f"docker inspect {cname} --format '{{{{.Config.Image}}}}' 2>/dev/null | tee /opt/homelab/data/rollback_{cname}.txt >/dev/null 2>&1 || true"))
     await loop.run_in_executor(None,lambda:pr(f"docker rm -f {cname} 2>/dev/null || true"))
-    pf=f"-p {port}:{port}" if port else ""
+    # Smart port — находим свободный
+    loop2=asyncio.get_event_loop()
+    used_ports = await loop2.run_in_executor(None, get_used_ports_on_prod)
+    free_port = find_free_port(port, used_ports) if port else None
+    if port and free_port != port:
+        log.info(f"Port {port} busy, using {free_port} for {cname}")
+    pf=f"-p {free_port}:{port}" if free_port and port else (f"-p {free_port}:{free_port}" if free_port else "")
     o,e,code=await loop.run_in_executor(None,lambda:pr(f"docker run -d --restart unless-stopped --name {cname} {pf} --label com.centurylinklabs.watchtower.enable=true {target} 2>&1",60))
     if code!=0:
         await message.reply_text(f"❌ Ошибка:\n```\n{(e or o)[:200]}\n```",parse_mode="Markdown"); return
@@ -825,8 +846,9 @@ async def do_deploy(message,image,version):
     if "true" not in state.lower():
         await message.reply_text("❌ Контейнер упал сразу после старта"); return
     mput("deployed",f"{image.replace('/','_')}/{version}.json",{"image":target,"container":cname,"port":port,"deployed_at":datetime.now().isoformat(),"host":PROD_HOST})
-    mput("history",f"{datetime.now().strftime('%Y%m%d-%H%M%S')}_{image.replace('/','_')}.json",{"image":target,"action":"deploy","port":port,"ts":datetime.now().isoformat()})
-    url=f"http://{PROD_HOST}:{port}" if port else None
+    mput("history",f"{datetime.now().strftime('%Y%m%d-%H%M%S')}_{image.replace('/','_')}.json",{"image":target,"action":"deploy","port":free_port,"ts":datetime.now().isoformat()})
+    asyncio.create_task(generate_dashboard())
+    url=f"http://{PROD_HOST}:{free_port}" if free_port else None
     lines=[f"✅ *{image}:{version}* запущен!\n"]
     if url: lines.append(f"🌐 *Адрес:* {url}")
     if port: lines.append(f"🔌 *Порт:* `{port}`")
@@ -964,6 +986,17 @@ async def on_callback(update,ctx):
             if action=="TEST_ONLY": await run_autopilot(q.message,"NORMAL",test_only=True); return
             if action in ("STRICT","NORMAL","SOFT"): await run_autopilot(q.message,action); return
             if action=="STATUS": await _show_status_inline(q.message); return
+            if action=="DASH":
+                await q.edit_message_reply_markup(None)
+                msg2 = await q.message.reply_text("🖥 Генерирую dashboard...")
+                ok = await generate_dashboard()
+                url = "http://192.168.31.178:8099"
+                await msg2.edit_text(
+                    f"🖥 *Dashboard {'готов' if ok else 'ошибка'}!*\n{url}" if ok else "❌ Ошибка",
+                    parse_mode="Markdown",
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🌐 Открыть",url=url)]]) if ok else None
+                )
+                return
             if action=="MANAGE": await _show_manage(q.message); return
             return
 
@@ -1192,6 +1225,176 @@ async def handle_document(update,ctx):
     else:
         await update.message.reply_text(f"❓ Не понял файл *{fname}*\nОжидаю .yml, .yaml или .env",parse_mode="Markdown")
 
+
+# ── SMART PORT ALLOCATOR ─────────────────────────────────────────────────
+def get_used_ports_on_prod():
+    """Получает список занятых портов на mini-prod."""
+    out,_,_ = pr("docker ps --format '{{.Ports}}' 2>/dev/null")
+    used = set()
+    for line in out.strip().splitlines():
+        for m in re.finditer(r':(\d+)->', line):
+            used.add(int(m.group(1)))
+    return used
+
+def find_free_port(preferred, used_ports, start=10000, end=19999):
+    """Найти свободный порт. Сначала пробуем preferred, потом ищем свободный."""
+    if preferred and preferred not in used_ports:
+        return preferred
+    # Ищем свободный в диапазоне
+    for port in range(start, end):
+        if port not in used_ports:
+            return port
+    return None
+
+
+# ── DASHBOARD ─────────────────────────────────────────────────────────────
+DASHBOARD_PATH = "/opt/homelab/dashboard/index.html"
+
+async def generate_dashboard():
+    """Генерирует красивый HTML dashboard."""
+    loop = asyncio.get_event_loop()
+
+    out,_,_ = await loop.run_in_executor(None, lambda:
+        pr("docker ps -a --format '{{.Names}}|{{.Image}}|{{.Status}}|{{.Ports}}'"))
+    containers = []
+    for line in out.strip().splitlines():
+        if "|" not in line: continue
+        parts = line.split("|")
+        name=parts[0]; img=parts[1]; status=parts[2]; ports=parts[3] if len(parts)>3 else ""
+        m = re.search(r':(\d+)->',ports)
+        port = m.group(1) if m else None
+        url = f"http://{PROD_HOST}:{port}" if port else None
+        is_up = status.lower().startswith("up")
+        _,svc = find_svc(name)
+        containers.append({
+            "name":name,"img":img,"status":status,"url":url,"is_up":is_up,
+            "login":svc["login"] if svc else None,
+            "pass":svc["pass"] if svc else None,
+            "note":svc["note"] if svc else None
+        })
+
+    saved = mlist("saved-later", limit=30)
+    now = datetime.now().strftime("%d.%m.%Y %H:%M")
+    up = [c for c in containers if c["is_up"]]
+    down = [c for c in containers if not c["is_up"]]
+
+    def card(c, card_class):
+        url_btn = f'<a href="{c["url"]}" target="_blank" class="btn">🌐 Открыть</a>' if c.get("url") else ""
+        creds = ""
+        if c.get("login") and c.get("pass"):
+            creds = f'<div class="creds"><span class="label">Логин</span> <code>{c["login"]}</code><br><span class="label">Пароль</span> <code>{c["pass"]}</code></div>'
+        elif c.get("note"):
+            creds = f'<div class="creds"><span class="label">ℹ️</span> {c["note"]}</div>'
+        else:
+            creds = '<div class="creds"><span class="label">🔓 Без авторизации</span></div>'
+        badge = "● Работает" if card_class=="up" else "● Упал"
+        return f"""<div class="card {card_class}">
+  <div class="card-top"><span class="name">{c["name"]}</span><span class="badge {card_class}">{badge}</span></div>
+  <div class="img-tag">{c["img"]}</div>
+  <div class="status">{c["status"]}</div>
+  {creds}{url_btn}
+</div>"""
+
+    def saved_card(s):
+        img = s.get("image","?")
+        rec = s.get("rec","?")
+        diag = s.get("diag","")[:150].replace("<","&lt;").replace(">","&gt;")
+        ts = s.get("ts","")[:10]
+        gh = ""
+        if "/" in img and "." not in img.split("/")[0]:
+            gh = f'<a href="https://github.com/{img.split(":")[0]}" target="_blank" class="btn btn-gh">📋 GitHub</a>'
+        elif "ghcr.io/" in img:
+            gh = f'<a href="https://github.com/{img.replace("ghcr.io/","").split(":")[0]}" target="_blank" class="btn btn-gh">📋 GitHub</a>'
+        return f"""<div class="card saved">
+  <div class="card-top"><span class="name">{img.split("/")[-1].split(":")[0]}</span><span class="badge saved">⚠ Доработка</span></div>
+  <div class="img-tag">{img}</div>
+  <div class="status">{rec}</div>
+  <div class="diag">{diag}</div>
+  <div class="ts">{ts}</div>
+  {gh}
+</div>"""
+
+    up_cards = "".join(card(c,"up") for c in up) or '<div class="empty">Нет работающих сервисов</div>'
+    down_cards = "".join(card(c,"down") for c in down) or '<div class="empty">Все сервисы работают ✅</div>'
+    seen_saved = set()
+    saved_cards_list = []
+    for s in saved:
+        img = s.get("image","?")
+        if img not in seen_saved:
+            seen_saved.add(img)
+            saved_cards_list.append(saved_card(s))
+    saved_cards = "".join(saved_cards_list) or '<div class="empty">Нет сервисов для доработки</div>'
+
+    html = f"""<!DOCTYPE html>
+<html lang="ru"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="refresh" content="30">
+<title>Homelab Dashboard</title>
+<style>
+*{{box-sizing:border-box;margin:0;padding:0}}
+body{{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#0d1117;color:#e6edf3;min-height:100vh}}
+.header{{background:#161b22;border-bottom:1px solid #30363d;padding:20px 32px;display:flex;justify-content:space-between;align-items:center}}
+.header h1{{font-size:22px;font-weight:700;color:#58a6ff}}
+.header .time{{color:#8b949e;font-size:13px}}
+.wrap{{max-width:1200px;margin:0 auto;padding:24px 32px}}
+.stats{{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:32px}}
+.stat{{background:#161b22;border:1px solid #30363d;border-radius:12px;padding:20px;text-align:center}}
+.stat .n{{font-size:40px;font-weight:800;line-height:1}}
+.stat .l{{color:#8b949e;font-size:13px;margin-top:6px}}
+.n.green{{color:#3fb950}}.n.red{{color:#f85149}}.n.yellow{{color:#d29922}}
+.section{{margin-bottom:32px}}
+.section-title{{font-size:16px;font-weight:600;margin-bottom:16px;padding-bottom:10px;border-bottom:1px solid #30363d}}
+.section-title.green{{color:#3fb950}}.section-title.red{{color:#f85149}}.section-title.yellow{{color:#d29922}}
+.grid{{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px}}
+.card{{background:#161b22;border:1px solid #30363d;border-radius:12px;padding:18px}}
+.card.up{{border-left:4px solid #3fb950}}.card.down{{border-left:4px solid #f85149}}.card.saved{{border-left:4px solid #d29922}}
+.card-top{{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}}
+.name{{font-size:15px;font-weight:600}}
+.badge{{font-size:11px;padding:3px 10px;border-radius:20px;font-weight:500}}
+.badge.up{{background:#0d4429;color:#3fb950}}.badge.down{{background:#3d0c0c;color:#f85149}}.badge.saved{{background:#3d2800;color:#d29922}}
+.img-tag{{font-size:12px;color:#8b949e;font-family:monospace;margin-bottom:6px}}
+.status{{font-size:13px;color:#8b949e;margin-bottom:10px}}
+.creds{{background:#0d1117;border-radius:8px;padding:10px;margin-bottom:12px;font-size:13px}}
+.label{{color:#8b949e;font-size:11px}}
+code{{background:#21262d;padding:2px 6px;border-radius:4px;font-family:monospace;font-size:12px;color:#79c0ff}}
+.diag{{background:#0d1117;border-radius:8px;padding:10px;font-size:11px;font-family:monospace;color:#8b949e;margin-bottom:8px;max-height:60px;overflow:hidden}}
+.ts{{font-size:11px;color:#484f58;margin-bottom:10px}}
+.btn{{display:inline-block;padding:8px 16px;border-radius:8px;text-decoration:none;font-size:13px;font-weight:500;background:#1f6feb;color:#fff;margin-right:8px}}
+.btn:hover{{background:#388bfd}}.btn-gh{{background:#21262d;color:#e6edf3}}.btn-gh:hover{{background:#30363d}}
+.empty{{color:#484f58;font-style:italic;padding:20px;text-align:center;background:#161b22;border-radius:12px;border:1px solid #30363d}}
+</style></head><body>
+<div class="header"><h1>🤖 Homelab Dashboard</h1><div class="time">Обновлено: {now} · каждые 30с</div></div>
+<div class="wrap">
+<div class="stats">
+  <div class="stat"><div class="n green">{len(up)}</div><div class="l">Работают</div></div>
+  <div class="stat"><div class="n red">{len(down)}</div><div class="l">Упали</div></div>
+  <div class="stat"><div class="n yellow">{len(seen_saved)}</div><div class="l">Требуют доработки</div></div>
+</div>
+<div class="section"><div class="section-title green">✅ Работающие сервисы ({len(up)})</div><div class="grid">{up_cards}</div></div>
+<div class="section"><div class="section-title red">❌ Упавшие сервисы ({len(down)})</div><div class="grid">{down_cards}</div></div>
+<div class="section"><div class="section-title yellow">💾 Требуют доработки ({len(seen_saved)})</div><div class="grid">{saved_cards}</div></div>
+</div></body></html>"""
+
+    # Записываем через SFTP
+    def write_file():
+        try:
+            c = paramiko.SSHClient()
+            c.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            if SSH_KEY and os.path.exists(SSH_KEY):
+                c.connect("192.168.31.178", username=SANDBOX_USER, key_filename=SSH_KEY, timeout=10)
+            else:
+                c.connect("192.168.31.178", username=SANDBOX_USER, password=SANDBOX_PASS, timeout=10)
+            sftp = c.open_sftp()
+            with sftp.file(DASHBOARD_PATH, "w") as f:
+                f.write(html)
+            sftp.close(); c.close()
+            return True
+        except Exception as e:
+            log.error(f"Dashboard write: {e}")
+            return False
+
+    return await loop.run_in_executor(None, write_file)
+
 # ── BACKGROUND TASKS ──────────────────────────────────────────────────────
 async def background_monitor(app):
     """Фоновый мониторинг — алерты о падении сервисов."""
@@ -1308,7 +1511,8 @@ def main():
     app.add_handler(CommandHandler("trivy",    cmd_trivy))
     app.add_handler(CommandHandler("test",     cmd_test))
     app.add_handler(CommandHandler("testall",  cmd_testall))
-    app.add_handler(CommandHandler("reset",    cmd_reset))
+    app.add_handler(CommandHandler("reset",     cmd_reset))
+    app.add_handler(CommandHandler("dashboard",  cmd_dashboard))
     app.add_handler(CallbackQueryHandler(on_callback))
     app.add_handler(MessageHandler(filters.Document.ALL,handle_document))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND,handle_text))
