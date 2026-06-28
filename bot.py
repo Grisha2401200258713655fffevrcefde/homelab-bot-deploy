@@ -701,6 +701,7 @@ async def cmd_start(update, ctx):
         [btn("Управление сервисами", "ap:MANAGE:x")],
         [btn("Статус серверов", "ap:STATUS:x")],
         [btn("Dashboard", "ap:DASH:x")],
+        [btn("AI советы по кластеру", "ap:ADVICE:x")],
     ])
     await update.message.reply_text(
         "*Homelab Sentinel v7*\n\n"
@@ -751,6 +752,9 @@ async def _do_explore(message, query):
         docker_img = item.get("docker_img")
         if docker_img:
             rows.append([btn("Тест Docker", f"do:test:{docker_img}:latest")])
+        full_name2 = item.get("full_name","")
+        if full_name2:
+            rows.append([btn("AI Анализ", f"analyze:repo:{full_name2}")])
         if item.get("url"):
             rows.append([url_btn("GitHub", item["url"])])
         await message.reply_text("\n".join(lines), parse_mode="Markdown",
@@ -1044,6 +1048,16 @@ async def on_callback(update, ctx):
                     if ok2: lines2.append(f"OK *{name2}*: {count2} контейнеров, RAM {ram2}")
                     else: lines2.append(f"ERR *{name2}* — {ram2}")
                 await msg2.edit_text("\n".join(lines2), parse_mode="Markdown"); return
+            if action == "ADVICE":
+                running2, suggestions2 = await ai_cluster_advice(None)
+                lines_adv = ["*Анализ кластера*", f"Запущено: {len(running2)}","","*Рекомендации:*"]
+                if suggestions2:
+                    for s2 in suggestions2: lines_adv.append(f"  * {s2}")
+                else:
+                    lines_adv.append("  Всё хорошо!")
+                lines_adv += ["","*Контейнеры:*"] + [f"  `{n}`" for n in running2[:8]]
+                await q.message.reply_text(chr(10).join(lines_adv), parse_mode="Markdown")
+                return
             if action == "DASH":
                 msg3 = await q.message.reply_text("Генерирую...")
                 ok = await generate_dashboard()
@@ -1133,6 +1147,24 @@ async def on_callback(update, ctx):
                 _, e, code = await loop.run_in_executor(None, lambda: pr(f"docker run -d --restart unless-stopped --name {a1} {prev.strip()} 2>&1", 60))
                 if code == 0: await q.message.reply_text(f"Rollback: `{prev.strip()}`", parse_mode="Markdown")
                 else: await q.message.reply_text(f"Ошибка rollback: {e[:150]}")
+        if data.startswith("analyze:"):
+            parts = data.split(":"); action = parts[1]; repo = ":".join(parts[2:])
+            await q.edit_message_reply_markup(None)
+            if action == "repo":
+                await q.message.reply_text(f"Используй: /analyze {repo}")
+                return
+            if action == "dockerfile":
+                msg_a = await q.message.reply_text(f"AI создаёт Dockerfile для `{repo}`...", parse_mode="Markdown")
+                parts2 = repo.split("/")
+                name2 = parts2[-1] if parts2 else repo
+                dockerfile = await ai_create_dockerfile(name2, "Python", "")
+                if dockerfile:
+                    lines_a = [f"*Dockerfile для {name2}*", "", f"```\n{dockerfile[:1500]}\n```", "", "_Сохрани файл и используй при деплое_"]
+                    await msg_a.edit_text(chr(10).join(lines_a), parse_mode="Markdown")
+                else:
+                    await msg_a.edit_text("Ollama недоступна — не могу создать Dockerfile")
+            return
+
         if data.startswith("agent:"):
             parts = data.split(":"); action = parts[1]
             await q.edit_message_reply_markup(None)
@@ -1179,6 +1211,24 @@ async def on_callback(update, ctx):
                     await q.message.reply_text("Заблокированных нет")
             return
 
+        if data.startswith("analyze:"):
+            parts = data.split(":"); action = parts[1]; repo = ":".join(parts[2:])
+            await q.edit_message_reply_markup(None)
+            if action == "repo":
+                await q.message.reply_text(f"Используй: /analyze {repo}")
+                return
+            if action == "dockerfile":
+                msg_a = await q.message.reply_text(f"AI создаёт Dockerfile для `{repo}`...", parse_mode="Markdown")
+                parts2 = repo.split("/")
+                name2 = parts2[-1] if parts2 else repo
+                dockerfile = await ai_create_dockerfile(name2, "Python", "")
+                if dockerfile:
+                    lines_a = [f"*Dockerfile для {name2}*", "", f"```\n{dockerfile[:1500]}\n```", "", "_Сохрани файл и используй при деплое_"]
+                    await msg_a.edit_text(chr(10).join(lines_a), parse_mode="Markdown")
+                else:
+                    await msg_a.edit_text("Ollama недоступна — не могу создать Dockerfile")
+            return
+
         if data.startswith("agent:"):
             parts = data.split(":"); action = parts[1]
             await q.edit_message_reply_markup(None)
@@ -1221,6 +1271,24 @@ async def on_callback(update, ctx):
                 blocked = state.get("blocked", [])
                 msg_txt = "Заблокированных нет" if not blocked else "Заблокированные: " + ", ".join(f"`{x}`" for x in blocked)
                 await q.message.reply_text(msg_txt, parse_mode="Markdown")
+            return
+
+        if data.startswith("analyze:"):
+            parts = data.split(":"); action = parts[1]; repo = ":".join(parts[2:])
+            await q.edit_message_reply_markup(None)
+            if action == "repo":
+                await q.message.reply_text(f"Используй: /analyze {repo}")
+                return
+            if action == "dockerfile":
+                msg_a = await q.message.reply_text(f"AI создаёт Dockerfile для `{repo}`...", parse_mode="Markdown")
+                parts2 = repo.split("/")
+                name2 = parts2[-1] if parts2 else repo
+                dockerfile = await ai_create_dockerfile(name2, "Python", "")
+                if dockerfile:
+                    lines_a = [f"*Dockerfile для {name2}*", "", f"```\n{dockerfile[:1500]}\n```", "", "_Сохрани файл и используй при деплое_"]
+                    await msg_a.edit_text(chr(10).join(lines_a), parse_mode="Markdown")
+                else:
+                    await msg_a.edit_text("Ollama недоступна — не могу создать Dockerfile")
             return
 
         if data.startswith("agent:"):
@@ -1493,6 +1561,88 @@ async def background_digest(app):
 # Этот модуль добавляется в bot_v7.py как дополнительные background tasks
 
 AGENT_STATE_KEY = "agent/state.json"
+
+async def ai_analyze_project(name, url, desc, stars, lang):
+    """AI анализирует проект и предлагает доработки."""
+    prompt = (
+        f'Проект: {name}\n'
+        f'Язык: {lang}\n'
+        f'Звезды: {stars}\n'
+        f'Описание: {desc}\n\n'
+        f'Ответь кратко на русском (3-4 пункта):\n'
+        f'1. Что делает проект\n'
+        f'2. Можно ли запустить в Docker (да/нет)\n'
+        f'3. Одно главное улучшение которое можно добавить\n'
+        f'4. Подходит ли для homelab (да/нет и почему)\n'
+        f'Ответ:'
+    )
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"{OLLAMA_URL}/api/generate",
+                json={"model": OLLAMA_MODEL, "prompt": prompt, "stream": False},
+                timeout=aiohttp.ClientTimeout(total=45)
+            ) as r:
+                if r.status == 200:
+                    d = await r.json()
+                    return d.get("response", "").strip()
+    except Exception as e:
+        log.warning(f"AI analyze error: {e}")
+    return ""
+
+async def ai_create_dockerfile(name, lang, desc):
+    """AI создаёт Dockerfile для проекта без Docker."""
+    prompt = (
+        f'Создай минимальный рабочий Dockerfile для проекта {name}.\n'
+        f'Язык: {lang}\n'
+        f'Описание: {desc}\n\n'
+        f'Требования:\n'
+        f'- Используй официальный базовый образ\n'
+        f'- Минимальный размер\n'
+        f'- EXPOSE нужный порт\n'
+        f'- CMD для запуска\n\n'
+        f'Ответь ТОЛЬКО содержимым Dockerfile, без объяснений:'
+    )
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"{OLLAMA_URL}/api/generate",
+                json={"model": OLLAMA_MODEL, "prompt": prompt, "stream": False},
+                timeout=aiohttp.ClientTimeout(total=60)
+            ) as r:
+                if r.status == 200:
+                    d = await r.json()
+                    return d.get("response", "").strip()
+    except Exception as e:
+        log.warning(f"AI dockerfile error: {e}")
+    return ""
+
+async def ai_cluster_advice(app):
+    """AI анализирует кластер и предлагает улучшения."""
+    loop = asyncio.get_event_loop()
+    out,_,_ = await loop.run_in_executor(None, lambda: pr("docker ps --format '{{.Names}}|{{.Image}}'"))
+    running = [line.split("|")[0] for line in out.strip().splitlines() if "|" in line]
+
+    has_backup = any("restic" in n or "backup" in n for n in running)
+    has_proxy = any("nginx" in n or "traefik" in n or "caddy" in n for n in running)
+    has_monitor = any("grafana" in n or "prometheus" in n or "uptime" in n for n in running)
+    has_vpn = any("wireguard" in n or "tailscale" in n for n in running)
+
+    suggestions = []
+    if not has_backup:
+        suggestions.append("Нет бэкапов — рекомендую restic или duplicati")
+    if not has_proxy:
+        suggestions.append("Нет reverse proxy — рекомендую nginx-proxy-manager для SSL")
+    if not has_monitor:
+        suggestions.append("Нет мониторинга — рекомендую uptime-kuma или grafana")
+    if not has_vpn:
+        suggestions.append("Нет VPN — рекомендую WireGuard для удалённого доступа")
+    if len(running) > 10:
+        suggestions.append(f"Запущено {len(running)} контейнеров — проверь что всё нужно")
+
+    return running, suggestions
+
+
 REPAIR_ATTEMPTS = {}  # cname -> attempt_count
 
 def load_agent_state():
@@ -1831,6 +1981,74 @@ async def agent_resources(app):
 
 
 @admin_only
+
+@admin_only
+async def cmd_analyze(update, ctx):
+    """Анализ проекта через AI."""
+    if not ctx.args:
+        await update.message.reply_text(
+            "Использование: /analyze owner/repo\n"
+            "Например: /analyze sherlock-project/sherlock"
+        ); return
+    repo = ctx.args[0]
+    msg = await update.message.reply_text(f"AI анализирует `{repo}`...", parse_mode="Markdown")
+    try:
+        async with aiohttp.ClientSession() as session:
+            headers = {}
+            if GITHUB_TOKEN: headers["Authorization"] = f"token {GITHUB_TOKEN}"
+            async with session.get(
+                f"https://api.github.com/repos/{repo}",
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=10)
+            ) as r:
+                if r.status != 200:
+                    await msg.edit_text(f"Репо `{repo}` не найдено"); return
+                data = await r.json()
+        name = data["name"]
+        desc = data.get("description","") or ""
+        stars = data["stargazers_count"]
+        lang = data.get("language","") or "Unknown"
+        has_docker = any(t in ["docker","containers"] for t in data.get("topics",[]))
+        analysis = await ai_analyze_project(name, data["html_url"], desc, stars, lang)
+        lines = [
+            f"*AI анализ: {name}*",
+            f"Stars: {stars:,} | Lang: {lang}",
+            f"_{desc[:150]}_",
+            "",
+            "*Анализ:*",
+            analysis[:800] if analysis else "_Ollama недоступна_",
+        ]
+        rows = []
+        if not has_docker:
+            rows.append([btn("Создать Dockerfile", f"analyze:dockerfile:{repo}")])
+        rows.append([btn("Тест Docker образа", f"do:test:{repo.lower()}:latest")])
+        rows.append([url_btn("GitHub", data["html_url"])])
+        await msg.edit_text(chr(10).join(lines), parse_mode="Markdown",
+                           reply_markup=InlineKeyboardMarkup(rows))
+    except Exception as e:
+        await msg.edit_text(f"Ошибка: {e}")
+
+@admin_only
+async def cmd_advice(update, ctx):
+    """AI советует что улучшить в кластере."""
+    msg = await update.message.reply_text("Анализирую кластер...")
+    running, suggestions = await ai_cluster_advice(None)
+    lines = [
+        "*Анализ кластера*",
+        f"Запущено: {len(running)} контейнеров",
+        "",
+        "*Рекомендации:*",
+    ]
+    if suggestions:
+        for s in suggestions:
+            lines.append(f"  * {s}")
+    else:
+        lines.append("  Кластер настроен хорошо!")
+    lines += ["", "*Запущено:*"] + [f"  `{n}`" for n in running[:10]]
+    await msg.edit_text(chr(10).join(lines), parse_mode="Markdown")
+
+
+
 @admin_only
 async def cmd_agent(update, ctx):
     """Управление автономным агентом."""
@@ -1864,6 +2082,88 @@ async def cmd_agent(update, ctx):
 # Этот модуль добавляется в bot_v7.py как дополнительные background tasks
 
 AGENT_STATE_KEY = "agent/state.json"
+
+async def ai_analyze_project(name, url, desc, stars, lang):
+    """AI анализирует проект и предлагает доработки."""
+    prompt = (
+        f'Проект: {name}\n'
+        f'Язык: {lang}\n'
+        f'Звезды: {stars}\n'
+        f'Описание: {desc}\n\n'
+        f'Ответь кратко на русском (3-4 пункта):\n'
+        f'1. Что делает проект\n'
+        f'2. Можно ли запустить в Docker (да/нет)\n'
+        f'3. Одно главное улучшение которое можно добавить\n'
+        f'4. Подходит ли для homelab (да/нет и почему)\n'
+        f'Ответ:'
+    )
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"{OLLAMA_URL}/api/generate",
+                json={"model": OLLAMA_MODEL, "prompt": prompt, "stream": False},
+                timeout=aiohttp.ClientTimeout(total=45)
+            ) as r:
+                if r.status == 200:
+                    d = await r.json()
+                    return d.get("response", "").strip()
+    except Exception as e:
+        log.warning(f"AI analyze error: {e}")
+    return ""
+
+async def ai_create_dockerfile(name, lang, desc):
+    """AI создаёт Dockerfile для проекта без Docker."""
+    prompt = (
+        f'Создай минимальный рабочий Dockerfile для проекта {name}.\n'
+        f'Язык: {lang}\n'
+        f'Описание: {desc}\n\n'
+        f'Требования:\n'
+        f'- Используй официальный базовый образ\n'
+        f'- Минимальный размер\n'
+        f'- EXPOSE нужный порт\n'
+        f'- CMD для запуска\n\n'
+        f'Ответь ТОЛЬКО содержимым Dockerfile, без объяснений:'
+    )
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"{OLLAMA_URL}/api/generate",
+                json={"model": OLLAMA_MODEL, "prompt": prompt, "stream": False},
+                timeout=aiohttp.ClientTimeout(total=60)
+            ) as r:
+                if r.status == 200:
+                    d = await r.json()
+                    return d.get("response", "").strip()
+    except Exception as e:
+        log.warning(f"AI dockerfile error: {e}")
+    return ""
+
+async def ai_cluster_advice(app):
+    """AI анализирует кластер и предлагает улучшения."""
+    loop = asyncio.get_event_loop()
+    out,_,_ = await loop.run_in_executor(None, lambda: pr("docker ps --format '{{.Names}}|{{.Image}}'"))
+    running = [line.split("|")[0] for line in out.strip().splitlines() if "|" in line]
+
+    has_backup = any("restic" in n or "backup" in n for n in running)
+    has_proxy = any("nginx" in n or "traefik" in n or "caddy" in n for n in running)
+    has_monitor = any("grafana" in n or "prometheus" in n or "uptime" in n for n in running)
+    has_vpn = any("wireguard" in n or "tailscale" in n for n in running)
+
+    suggestions = []
+    if not has_backup:
+        suggestions.append("Нет бэкапов — рекомендую restic или duplicati")
+    if not has_proxy:
+        suggestions.append("Нет reverse proxy — рекомендую nginx-proxy-manager для SSL")
+    if not has_monitor:
+        suggestions.append("Нет мониторинга — рекомендую uptime-kuma или grafana")
+    if not has_vpn:
+        suggestions.append("Нет VPN — рекомендую WireGuard для удалённого доступа")
+    if len(running) > 10:
+        suggestions.append(f"Запущено {len(running)} контейнеров — проверь что всё нужно")
+
+    return running, suggestions
+
+
 REPAIR_ATTEMPTS = {}  # cname -> attempt_count
 
 def load_agent_state():
@@ -2201,6 +2501,74 @@ async def agent_resources(app):
         await asyncio.sleep(1800)  # каждые 30 минут
 
 
+
+@admin_only
+async def cmd_analyze(update, ctx):
+    """Анализ проекта через AI."""
+    if not ctx.args:
+        await update.message.reply_text(
+            "Использование: /analyze owner/repo\n"
+            "Например: /analyze sherlock-project/sherlock"
+        ); return
+    repo = ctx.args[0]
+    msg = await update.message.reply_text(f"AI анализирует `{repo}`...", parse_mode="Markdown")
+    try:
+        async with aiohttp.ClientSession() as session:
+            headers = {}
+            if GITHUB_TOKEN: headers["Authorization"] = f"token {GITHUB_TOKEN}"
+            async with session.get(
+                f"https://api.github.com/repos/{repo}",
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=10)
+            ) as r:
+                if r.status != 200:
+                    await msg.edit_text(f"Репо `{repo}` не найдено"); return
+                data = await r.json()
+        name = data["name"]
+        desc = data.get("description","") or ""
+        stars = data["stargazers_count"]
+        lang = data.get("language","") or "Unknown"
+        has_docker = any(t in ["docker","containers"] for t in data.get("topics",[]))
+        analysis = await ai_analyze_project(name, data["html_url"], desc, stars, lang)
+        lines = [
+            f"*AI анализ: {name}*",
+            f"Stars: {stars:,} | Lang: {lang}",
+            f"_{desc[:150]}_",
+            "",
+            "*Анализ:*",
+            analysis[:800] if analysis else "_Ollama недоступна_",
+        ]
+        rows = []
+        if not has_docker:
+            rows.append([btn("Создать Dockerfile", f"analyze:dockerfile:{repo}")])
+        rows.append([btn("Тест Docker образа", f"do:test:{repo.lower()}:latest")])
+        rows.append([url_btn("GitHub", data["html_url"])])
+        await msg.edit_text(chr(10).join(lines), parse_mode="Markdown",
+                           reply_markup=InlineKeyboardMarkup(rows))
+    except Exception as e:
+        await msg.edit_text(f"Ошибка: {e}")
+
+@admin_only
+async def cmd_advice(update, ctx):
+    """AI советует что улучшить в кластере."""
+    msg = await update.message.reply_text("Анализирую кластер...")
+    running, suggestions = await ai_cluster_advice(None)
+    lines = [
+        "*Анализ кластера*",
+        f"Запущено: {len(running)} контейнеров",
+        "",
+        "*Рекомендации:*",
+    ]
+    if suggestions:
+        for s in suggestions:
+            lines.append(f"  * {s}")
+    else:
+        lines.append("  Кластер настроен хорошо!")
+    lines += ["", "*Запущено:*"] + [f"  `{n}`" for n in running[:10]]
+    await msg.edit_text(chr(10).join(lines), parse_mode="Markdown")
+
+
+
 @admin_only
 async def cmd_agent(update, ctx):
     """Управление автономным агентом."""
@@ -2229,6 +2597,88 @@ async def cmd_agent(update, ctx):
     ])
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown", reply_markup=kb)
 
+
+
+
+async def ai_analyze_project(name, url, desc, stars, lang):
+    """AI анализирует проект и предлагает доработки."""
+    prompt = (
+        f'Проект: {name}\n'
+        f'Язык: {lang}\n'
+        f'Звезды: {stars}\n'
+        f'Описание: {desc}\n\n'
+        f'Ответь кратко на русском (3-4 пункта):\n'
+        f'1. Что делает проект\n'
+        f'2. Можно ли запустить в Docker (да/нет)\n'
+        f'3. Одно главное улучшение которое можно добавить\n'
+        f'4. Подходит ли для homelab (да/нет и почему)\n'
+        f'Ответ:'
+    )
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"{OLLAMA_URL}/api/generate",
+                json={"model": OLLAMA_MODEL, "prompt": prompt, "stream": False},
+                timeout=aiohttp.ClientTimeout(total=45)
+            ) as r:
+                if r.status == 200:
+                    d = await r.json()
+                    return d.get("response", "").strip()
+    except Exception as e:
+        log.warning(f"AI analyze error: {e}")
+    return ""
+
+async def ai_create_dockerfile(name, lang, desc):
+    """AI создаёт Dockerfile для проекта без Docker."""
+    prompt = (
+        f'Создай минимальный рабочий Dockerfile для проекта {name}.\n'
+        f'Язык: {lang}\n'
+        f'Описание: {desc}\n\n'
+        f'Требования:\n'
+        f'- Используй официальный базовый образ\n'
+        f'- Минимальный размер\n'
+        f'- EXPOSE нужный порт\n'
+        f'- CMD для запуска\n\n'
+        f'Ответь ТОЛЬКО содержимым Dockerfile, без объяснений:'
+    )
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"{OLLAMA_URL}/api/generate",
+                json={"model": OLLAMA_MODEL, "prompt": prompt, "stream": False},
+                timeout=aiohttp.ClientTimeout(total=60)
+            ) as r:
+                if r.status == 200:
+                    d = await r.json()
+                    return d.get("response", "").strip()
+    except Exception as e:
+        log.warning(f"AI dockerfile error: {e}")
+    return ""
+
+async def ai_cluster_advice(app):
+    """AI анализирует кластер и предлагает улучшения."""
+    loop = asyncio.get_event_loop()
+    out,_,_ = await loop.run_in_executor(None, lambda: pr("docker ps --format '{{.Names}}|{{.Image}}'"))
+    running = [line.split("|")[0] for line in out.strip().splitlines() if "|" in line]
+
+    has_backup = any("restic" in n or "backup" in n for n in running)
+    has_proxy = any("nginx" in n or "traefik" in n or "caddy" in n for n in running)
+    has_monitor = any("grafana" in n or "prometheus" in n or "uptime" in n for n in running)
+    has_vpn = any("wireguard" in n or "tailscale" in n for n in running)
+
+    suggestions = []
+    if not has_backup:
+        suggestions.append("Нет бэкапов — рекомендую restic или duplicati")
+    if not has_proxy:
+        suggestions.append("Нет reverse proxy — рекомендую nginx-proxy-manager для SSL")
+    if not has_monitor:
+        suggestions.append("Нет мониторинга — рекомендую uptime-kuma или grafana")
+    if not has_vpn:
+        suggestions.append("Нет VPN — рекомендую WireGuard для удалённого доступа")
+    if len(running) > 10:
+        suggestions.append(f"Запущено {len(running)} контейнеров — проверь что всё нужно")
+
+    return running, suggestions
 
 
 REPAIR_ATTEMPTS = {}
@@ -2402,6 +2852,74 @@ async def agent_resources(app):
             log.warning(f"Agent resources: {e}")
         await asyncio.sleep(1800)
 
+
+@admin_only
+async def cmd_analyze(update, ctx):
+    """Анализ проекта через AI."""
+    if not ctx.args:
+        await update.message.reply_text(
+            "Использование: /analyze owner/repo\n"
+            "Например: /analyze sherlock-project/sherlock"
+        ); return
+    repo = ctx.args[0]
+    msg = await update.message.reply_text(f"AI анализирует `{repo}`...", parse_mode="Markdown")
+    try:
+        async with aiohttp.ClientSession() as session:
+            headers = {}
+            if GITHUB_TOKEN: headers["Authorization"] = f"token {GITHUB_TOKEN}"
+            async with session.get(
+                f"https://api.github.com/repos/{repo}",
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=10)
+            ) as r:
+                if r.status != 200:
+                    await msg.edit_text(f"Репо `{repo}` не найдено"); return
+                data = await r.json()
+        name = data["name"]
+        desc = data.get("description","") or ""
+        stars = data["stargazers_count"]
+        lang = data.get("language","") or "Unknown"
+        has_docker = any(t in ["docker","containers"] for t in data.get("topics",[]))
+        analysis = await ai_analyze_project(name, data["html_url"], desc, stars, lang)
+        lines = [
+            f"*AI анализ: {name}*",
+            f"Stars: {stars:,} | Lang: {lang}",
+            f"_{desc[:150]}_",
+            "",
+            "*Анализ:*",
+            analysis[:800] if analysis else "_Ollama недоступна_",
+        ]
+        rows = []
+        if not has_docker:
+            rows.append([btn("Создать Dockerfile", f"analyze:dockerfile:{repo}")])
+        rows.append([btn("Тест Docker образа", f"do:test:{repo.lower()}:latest")])
+        rows.append([url_btn("GitHub", data["html_url"])])
+        await msg.edit_text(chr(10).join(lines), parse_mode="Markdown",
+                           reply_markup=InlineKeyboardMarkup(rows))
+    except Exception as e:
+        await msg.edit_text(f"Ошибка: {e}")
+
+@admin_only
+async def cmd_advice(update, ctx):
+    """AI советует что улучшить в кластере."""
+    msg = await update.message.reply_text("Анализирую кластер...")
+    running, suggestions = await ai_cluster_advice(None)
+    lines = [
+        "*Анализ кластера*",
+        f"Запущено: {len(running)} контейнеров",
+        "",
+        "*Рекомендации:*",
+    ]
+    if suggestions:
+        for s in suggestions:
+            lines.append(f"  * {s}")
+    else:
+        lines.append("  Кластер настроен хорошо!")
+    lines += ["", "*Запущено:*"] + [f"  `{n}`" for n in running[:10]]
+    await msg.edit_text(chr(10).join(lines), parse_mode="Markdown")
+
+
+
 @admin_only
 async def cmd_agent(update, ctx):
     state = load_agent_state()
@@ -2461,8 +2979,14 @@ def main():
     app.add_handler(CommandHandler("test",      cmd_test))
     app.add_handler(CommandHandler("reset",     cmd_reset))
     app.add_handler(CommandHandler("agent",     cmd_agent))
+    app.add_handler(CommandHandler("analyze",   cmd_analyze))
+    app.add_handler(CommandHandler("advice",    cmd_advice))
     app.add_handler(CommandHandler("agent",     cmd_agent))
+    app.add_handler(CommandHandler("analyze",   cmd_analyze))
+    app.add_handler(CommandHandler("advice",    cmd_advice))
     app.add_handler(CommandHandler("agent",     cmd_agent))
+    app.add_handler(CommandHandler("analyze",   cmd_analyze))
+    app.add_handler(CommandHandler("advice",    cmd_advice))
     app.add_handler(CallbackQueryHandler(on_callback))
     app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
