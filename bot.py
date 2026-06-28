@@ -1133,6 +1133,133 @@ async def on_callback(update, ctx):
                 _, e, code = await loop.run_in_executor(None, lambda: pr(f"docker run -d --restart unless-stopped --name {a1} {prev.strip()} 2>&1", 60))
                 if code == 0: await q.message.reply_text(f"Rollback: `{prev.strip()}`", parse_mode="Markdown")
                 else: await q.message.reply_text(f"Ошибка rollback: {e[:150]}")
+        if data.startswith("agent:"):
+            parts = data.split(":"); action = parts[1]
+            await q.edit_message_reply_markup(None)
+            state = load_agent_state()
+            if action == "discover":
+                await q.message.reply_text("Запускаю поиск прямо сейчас...")
+                seen = load_seen()
+                candidates = [(n, v) for n, v in SVC.items() if n.lower() not in seen][:3]
+                if not candidates:
+                    await q.message.reply_text("Нет новых сервисов. /reset — сбросить кэш"); return
+                dep = []; fail = []
+                loop = asyncio.get_event_loop()
+                for name, svc in candidates:
+                    img = svc["img"]
+                    smsg = await q.message.reply_text(f"Тестирую `{img}`...", parse_mode="Markdown")
+                    pl = []
+                    with concurrent.futures.ThreadPoolExecutor() as pool:
+                        result = await loop.run_in_executor(pool, pipeline, img, "latest", pl)
+                    score = result["score"]; crit = result["metrics"].get("crit", 0)
+                    save_seen([name])
+                    if result["status"] == "pass" and score >= 75 and crit == 0:
+                        await smsg.edit_text(f"OK `{img}` — {score}/100 -> деплою", parse_mode="Markdown")
+                        await do_deploy(q.message, img, "latest")
+                        dep.append(f"`{img}` ({score}/100)")
+                    else:
+                        reason = f"CRIT:{crit}" if crit > 0 else f"score:{score}/100"
+                        await smsg.edit_text(f"FAIL `{img}` — {reason}", parse_mode="Markdown")
+                        fail.append(f"`{img}` — {reason}")
+                    await asyncio.sleep(1)
+                lines = ["Poisk zavershen"]
+                if dep: lines += ["*Задеплоено:*"] + [f"  OK {x}" for x in dep]
+                if fail: lines += ["Propushcheno:"] + [f"  FAIL {x}" for x in fail]
+                await q.message.reply_text("\n".join(lines), parse_mode="Markdown")
+            elif action == "reset_repairs":
+                REPAIR_ATTEMPTS.clear()
+                state["repaired"] = []
+                save_agent_state(state)
+                await q.message.reply_text("История ремонтов сброшена")
+            elif action == "blocked":
+                blocked = state.get("blocked", [])
+                if blocked:
+                    await q.message.reply_text("Заблокированные: " + ", ".join(f"`{x}`" for x in blocked), parse_mode="Markdown")
+                else:
+                    await q.message.reply_text("Заблокированных нет")
+            return
+
+        if data.startswith("agent:"):
+            parts = data.split(":"); action = parts[1]
+            await q.edit_message_reply_markup(None)
+            state = load_agent_state()
+            if action == "discover":
+                await q.message.reply_text("Запускаю поиск прямо сейчас...")
+                seen = load_seen()
+                candidates = [(n, v) for n, v in SVC.items() if n.lower() not in seen][:3]
+                if not candidates:
+                    await q.message.reply_text("Нет новых сервисов. /reset - сбросить кэш"); return
+                dep = []; fail = []
+                loop = asyncio.get_event_loop()
+                for name, svc in candidates:
+                    img = svc["img"]
+                    smsg = await q.message.reply_text(f"Тестирую `{img}`...", parse_mode="Markdown")
+                    pl = []
+                    with concurrent.futures.ThreadPoolExecutor() as pool:
+                        result = await loop.run_in_executor(pool, pipeline, img, "latest", pl)
+                    score = result["score"]; crit = result["metrics"].get("crit", 0)
+                    save_seen([name])
+                    if result["status"] == "pass" and score >= 75 and crit == 0:
+                        await smsg.edit_text(f"OK `{img}` - {score}/100 -> деплою", parse_mode="Markdown")
+                        await do_deploy(q.message, img, "latest")
+                        dep.append(f"`{img}` ({score}/100)")
+                    else:
+                        reason = f"CRIT:{crit}" if crit > 0 else f"score:{score}/100"
+                        await smsg.edit_text(f"FAIL `{img}` - {reason}", parse_mode="Markdown")
+                        fail.append(f"`{img}` - {reason}")
+                    await asyncio.sleep(1)
+                result_lines = ["*Поиск завершён*"]
+                if dep: result_lines += ["*Задеплоено:*"] + [f"  OK {x}" for x in dep]
+                if fail: result_lines += ["*Пропущено:*"] + [f"  FAIL {x}" for x in fail]
+                await q.message.reply_text("\n".join(result_lines), parse_mode="Markdown")
+            elif action == "reset_repairs":
+                REPAIR_ATTEMPTS.clear()
+                state["repaired"] = []
+                save_agent_state(state)
+                await q.message.reply_text("История ремонтов сброшена")
+            elif action == "blocked":
+                blocked = state.get("blocked", [])
+                msg_txt = "Заблокированных нет" if not blocked else "Заблокированные: " + ", ".join(f"`{x}`" for x in blocked)
+                await q.message.reply_text(msg_txt, parse_mode="Markdown")
+            return
+
+        if data.startswith("agent:"):
+            parts = data.split(":"); action = parts[1]
+            await q.edit_message_reply_markup(None)
+            state = load_agent_state()
+            if action == "discover":
+                await q.message.reply_text("Запускаю поиск...")
+                seen = load_seen()
+                cands = [(n,v) for n,v in SVC.items() if n.lower() not in seen][:3]
+                if not cands:
+                    await q.message.reply_text("Нет новых. /reset - сбросить"); return
+                dep2 = []; fail2 = []; loop2 = asyncio.get_event_loop()
+                for name2, svc2 in cands:
+                    img2 = svc2["img"]; pl2 = []
+                    smsg2 = await q.message.reply_text(f"Тест `{img2}`...", parse_mode="Markdown")
+                    with concurrent.futures.ThreadPoolExecutor() as pool2:
+                        res2 = await loop2.run_in_executor(pool2, pipeline, img2, "latest", pl2)
+                    sc2 = res2["score"]; cr2 = res2["metrics"].get("crit",0)
+                    save_seen([name2])
+                    if res2["status"]=="pass" and sc2>=75 and cr2==0:
+                        await smsg2.edit_text(f"OK `{img2}` {sc2}/100", parse_mode="Markdown")
+                        await do_deploy(q.message, img2, "latest"); dep2.append(f"`{img2}` ({sc2}/100)")
+                    else:
+                        r3 = f"CRIT:{cr2}" if cr2>0 else f"score:{sc2}"
+                        await smsg2.edit_text(f"FAIL `{img2}` {r3}", parse_mode="Markdown"); fail2.append(f"`{img2}` {r3}")
+                    await asyncio.sleep(1)
+                prs2 = ["*Поиск завершён*"]
+                if dep2: prs2+=["*Задеплоено:*"]+[f"  OK {x}" for x in dep2]
+                if fail2: prs2+=["*Пропущено:*"]+[f"  FAIL {x}" for x in fail2]
+                await q.message.reply_text(chr(10).join(prs2), parse_mode="Markdown")
+            elif action=="reset_repairs":
+                REPAIR_ATTEMPTS.clear(); state["repaired"]=[]; save_agent_state(state)
+                await q.message.reply_text("Сброшено")
+            elif action=="blocked":
+                bl = state.get("blocked",[])
+                await q.message.reply_text("Заблок: "+", ".join(f"`{x}`" for x in bl) if bl else "Нет", parse_mode="Markdown")
+            return
+
     except Exception as e:
         log.error(f"CB error {data!r}: {e}", exc_info=True)
         try: await q.message.reply_text(f"Ошибка: {e}")
@@ -1178,7 +1305,7 @@ async def run_autopilot(message, mode="NORMAL", search_only=False, test_only=Fal
         await asyncio.sleep(1)
     lines = ["*Автопилот завершён*\n"]
     if dep: lines += ["*Задеплоено:*"] + [f"  OK {x}" for x in dep]
-    if fail: lines += ["\n*Пропущено:*"] + [f"  FAIL {x}" for x in fail]
+    if fail: lines += ["Propushcheno:"] + [f"  FAIL {x}" for x in fail]
     await message.reply_text("\n".join(lines), parse_mode="Markdown")
 
 # ── TEXT & DOCUMENT HANDLERS ──────────────────────────────────────────────
@@ -1362,11 +1489,952 @@ async def background_digest(app):
                 await asyncio.sleep(60)
         except Exception as e: log.warning(f"Digest: {e}"); await asyncio.sleep(60)
 
+# ── AUTONOMOUS AGENT ──────────────────────────────────────────────────────
+# Этот модуль добавляется в bot_v7.py как дополнительные background tasks
+
+AGENT_STATE_KEY = "agent/state.json"
+REPAIR_ATTEMPTS = {}  # cname -> attempt_count
+
+def load_agent_state():
+    return mget("deployed", AGENT_STATE_KEY) or {
+        "last_discovery": None,
+        "last_trivy": None,
+        "last_disk_check": None,
+        "repaired": [],
+        "auto_deployed": [],
+        "blocked": [],  # сервисы которые не трогать
+    }
+
+def save_agent_state(state):
+    mput("deployed", AGENT_STATE_KEY, state)
+
+
+async def agent_heal(app):
+    """Следит за сервисами и сам чинит упавшие."""
+    await asyncio.sleep(120)  # даём боту стартовать
+    known = {}
+
+    while True:
+        try:
+            loop = asyncio.get_event_loop()
+            out, _, _ = await loop.run_in_executor(None, lambda:
+                pr("docker ps -a --format '{{.Names}}|{{.Status}}|{{.Image}}'"))
+
+            state = load_agent_state()
+            blocked = state.get("blocked", [])
+
+            for line in out.strip().splitlines():
+                if "|" not in line: continue
+                parts = line.split("|")
+                if len(parts) < 3: continue
+                name, status, image = parts[0], parts[1], parts[2]
+
+                if name in blocked: continue
+
+                was_up = known.get(name, True)
+                is_up = status.lower().startswith("up")
+                is_restarting = "restarting" in status.lower()
+
+                known[name] = is_up
+
+                # Сервис упал или в цикле рестартов
+                if (not is_up or is_restarting) and was_up:
+                    attempts = REPAIR_ATTEMPTS.get(name, 0)
+
+                    if attempts == 0:
+                        # Попытка 1: просто рестарт
+                        await app.bot.send_message(ADMIN_ID,
+                            f"АГЕНТ: `{name}` упал — пробую рестарт (попытка 1/3)",
+                            parse_mode="Markdown")
+                        _, _, code = await loop.run_in_executor(None, lambda n=name:
+                            pr(f"docker restart {n} 2>&1"))
+                        REPAIR_ATTEMPTS[name] = 1
+
+                    elif attempts == 1:
+                        # Попытка 2: смотрим логи и пробуем пересоздать
+                        logs, _, _ = await loop.run_in_executor(None, lambda n=name:
+                            pr(f"docker logs {n} --tail 20 2>&1"))
+
+                        await app.bot.send_message(ADMIN_ID,
+                            f"АГЕНТ: `{name}` всё ещё падает — пересоздаю (попытка 2/3)\n"
+                            f"Логи:\n```\n{logs[:400]}\n```",
+                            parse_mode="Markdown")
+
+                        # Получаем параметры контейнера
+                        inspect, _, _ = await loop.run_in_executor(None, lambda n=name:
+                            pr(f"docker inspect {n} 2>/dev/null"))
+                        try:
+                            info = json.loads(inspect)[0]
+                            config = info.get("Config", {})
+                            host_config = info.get("HostConfig", {})
+
+                            # Собираем команду запуска
+                            ports_bindings = host_config.get("PortBindings", {})
+                            pf = ""
+                            for container_port, bindings in ports_bindings.items():
+                                if bindings:
+                                    host_port = bindings[0].get("HostPort", "")
+                                    cp = container_port.split("/")[0]
+                                    pf += f" -p {host_port}:{cp}"
+
+                            binds = host_config.get("Binds", []) or []
+                            vf = " ".join(f"-v {b}" for b in binds)
+
+                            env_list = config.get("Env", []) or []
+                            ef = " ".join(f'-e "{e}"' for e in env_list if not e.startswith("PATH=") and not e.startswith("HOME="))
+
+                            restart_policy = host_config.get("RestartPolicy", {}).get("Name", "unless-stopped")
+
+                            # Удаляем и пересоздаём
+                            await loop.run_in_executor(None, lambda n=name:
+                                pr(f"docker rm -f {n} 2>/dev/null || true"))
+                            await asyncio.sleep(3)
+                            _, e, code = await loop.run_in_executor(None, lambda:
+                                pr(f"docker run -d --restart {restart_policy} --name {name} {pf} {ef} {vf} {image} 2>&1", 60))
+
+                            if code == 0:
+                                REPAIR_ATTEMPTS[name] = 2
+                            else:
+                                await app.bot.send_message(ADMIN_ID,
+                                    f"АГЕНТ: `{name}` не удалось пересоздать:\n```\n{e[:200]}\n```",
+                                    parse_mode="Markdown")
+                                REPAIR_ATTEMPTS[name] = 2
+                        except Exception as ex:
+                            log.warning(f"Agent repair inspect error: {ex}")
+                            REPAIR_ATTEMPTS[name] = 2
+
+                    elif attempts == 2:
+                        # Попытка 3: принудительное удаление и чистый деплой через SVC
+                        _, svc = find_svc(image)
+                        if svc:
+                            await app.bot.send_message(ADMIN_ID,
+                                f"АГЕНТ: `{name}` — финальная попытка, полный передеплой (3/3)",
+                                parse_mode="Markdown")
+                            await loop.run_in_executor(None, lambda n=name:
+                                pr(f"docker rm -f {n} 2>/dev/null || true"))
+                            await do_deploy(
+                                type('obj', (object,), {
+                                    'reply_text': lambda text, **kw: app.bot.send_message(ADMIN_ID, text, **kw)
+                                })(),
+                                svc["img"], "latest"
+                            )
+                            state["repaired"].append({"name": name, "ts": datetime.now().isoformat()})
+                            save_agent_state(state)
+                        else:
+                            await app.bot.send_message(ADMIN_ID,
+                                f"АГЕНТ: `{name}` — не знаю как починить, добавь в каталог\n"
+                                f"Образ: `{image}`",
+                                parse_mode="Markdown")
+                            blocked.append(name)
+                            state["blocked"] = blocked
+                            save_agent_state(state)
+                        REPAIR_ATTEMPTS[name] = 3
+
+                elif is_up and not was_up:
+                    # Восстановился
+                    if name in REPAIR_ATTEMPTS:
+                        attempts = REPAIR_ATTEMPTS.pop(name)
+                        await app.bot.send_message(ADMIN_ID,
+                            f"АГЕНТ: `{name}` восстановился (попытка {attempts})",
+                            parse_mode="Markdown")
+
+        except Exception as e:
+            log.warning(f"Agent heal error: {e}")
+        await asyncio.sleep(300)
+
+
+async def agent_discovery(app):
+    """Ночной поиск и деплой новых сервисов."""
+    await asyncio.sleep(180)
+
+    while True:
+        try:
+            now = datetime.now()
+            state = load_agent_state()
+            last = state.get("last_discovery")
+            last_dt = datetime.fromisoformat(last) if last else None
+
+            # Запускаем в 3:00 ночи, раз в сутки
+            should_run = (now.hour == 3 and now.minute < 5 and
+                         (last_dt is None or (now - last_dt).days >= 1))
+
+            if should_run:
+                await app.bot.send_message(ADMIN_ID,
+                    "АГЕНТ: Ночной поиск новых сервисов запущен...",
+                    parse_mode="Markdown")
+
+                seen = load_seen()
+                candidates = [(n, v) for n, v in SVC.items() if n.lower() not in seen][:5]
+
+                if not candidates:
+                    await app.bot.send_message(ADMIN_ID,
+                        "АГЕНТ: Все сервисы из каталога уже просмотрены",
+                        parse_mode="Markdown")
+                else:
+                    deployed_auto = []
+                    failed_auto = []
+                    loop = asyncio.get_event_loop()
+
+                    for name, svc in candidates:
+                        img = svc["img"]
+                        pl = []
+                        with concurrent.futures.ThreadPoolExecutor() as pool:
+                            result = await loop.run_in_executor(pool, pipeline, img, "latest", pl)
+
+                        score = result["score"]
+                        crit = result["metrics"].get("crit", 0)
+                        save_seen([name])
+
+                        if result["status"] == "pass" and score >= 75 and crit == 0:
+                            await do_deploy(
+                                type('obj', (object,), {
+                                    'reply_text': lambda text, **kw: app.bot.send_message(ADMIN_ID, text, **kw)
+                                })(),
+                                img, "latest"
+                            )
+                            deployed_auto.append(f"`{img}` ({score}/100)")
+                        else:
+                            reason = f"CRIT:{crit}" if crit > 0 else f"score:{score}/100"
+                            failed_auto.append(f"`{img}` — {reason}")
+                        await asyncio.sleep(2)
+
+                    state["last_discovery"] = now.isoformat()
+                    state["auto_deployed"].extend(deployed_auto)
+                    save_agent_state(state)
+
+                    lines = ["АГЕНТ: Ночной поиск завершён\n"]
+                    if deployed_auto:
+                        lines += ["*Задеплоено:*"] + [f"  OK {x}" for x in deployed_auto]
+                    if failed_auto:
+                        lines += ["Propushcheno:"] + [f"  FAIL {x}" for x in failed_auto]
+                    await app.bot.send_message(ADMIN_ID, "\n".join(lines), parse_mode="Markdown")
+
+                await asyncio.sleep(300)
+            else:
+                await asyncio.sleep(60)
+
+        except Exception as e:
+            log.warning(f"Agent discovery error: {e}")
+            await asyncio.sleep(60)
+
+
+async def agent_updater(app):
+    """Следит за обновлениями образов и обновляет автоматически."""
+    await asyncio.sleep(240)
+
+    while True:
+        try:
+            now = datetime.now()
+            # Раз в воскресенье в 4:00
+            if now.weekday() == 6 and now.hour == 4 and now.minute < 5:
+                loop = asyncio.get_event_loop()
+                out, _, _ = await loop.run_in_executor(None, lambda:
+                    pr("docker ps --format '{{.Names}}|{{.Image}}'"))
+
+                await app.bot.send_message(ADMIN_ID,
+                    "АГЕНТ: Проверяю обновления образов...",
+                    parse_mode="Markdown")
+
+                updated = []
+                failed = []
+
+                for line in out.strip().splitlines():
+                    if "|" not in line: continue
+                    name, image = line.split("|", 1)
+                    if ":" in image:
+                        img_name, tag = image.rsplit(":", 1)
+                    else:
+                        img_name, tag = image, "latest"
+
+                    # Пуллим новый образ
+                    old_id, _, _ = await loop.run_in_executor(None, lambda i=image:
+                        sb(f"docker image inspect {i} --format '{{{{.Id}}}}' 2>/dev/null"))
+                    await loop.run_in_executor(None, lambda i=image:
+                        sb(f"docker pull {i} 2>/dev/null", 120))
+                    new_id, _, _ = await loop.run_in_executor(None, lambda i=image:
+                        sb(f"docker image inspect {i} --format '{{{{.Id}}}}' 2>/dev/null"))
+
+                    if old_id.strip() != new_id.strip() and new_id.strip():
+                        # Образ обновился — сохраняем rollback и рестартим
+                        await loop.run_in_executor(None, lambda n=name, i=image:
+                            pr(f"echo '{i}' | sudo tee /opt/homelab/rollback_{n}.txt >/dev/null"))
+                        _, _, code = await loop.run_in_executor(None, lambda n=name:
+                            pr(f"docker restart {n} 2>&1"))
+                        await asyncio.sleep(10)
+                        state_out, _, _ = await loop.run_in_executor(None, lambda n=name:
+                            pr(f"docker inspect {n} --format '{{{{.State.Running}}}}' 2>/dev/null"))
+
+                        if "true" in state_out.lower():
+                            updated.append(f"`{name}` — {img_name}:{tag}")
+                        else:
+                            # Откат
+                            await loop.run_in_executor(None, lambda n=name, i=image:
+                                pr(f"docker rm -f {n} && docker run -d --restart unless-stopped --name {n} {i} 2>&1", 60))
+                            failed.append(f"`{name}` — обновление сломало, откат")
+
+                if updated or failed:
+                    lines = ["АГЕНТ: Обновление образов\n"]
+                    if updated: lines += ["*Обновлено:*"] + [f"  OK {x}" for x in updated]
+                    if failed: lines += ["\n*Откат:*"] + [f"  WARN {x}" for x in failed]
+                    await app.bot.send_message(ADMIN_ID, "\n".join(lines), parse_mode="Markdown")
+                else:
+                    await app.bot.send_message(ADMIN_ID,
+                        "АГЕНТ: Все образы актуальны", parse_mode="Markdown")
+
+                await asyncio.sleep(3600)
+            else:
+                await asyncio.sleep(300)
+
+        except Exception as e:
+            log.warning(f"Agent updater error: {e}")
+            await asyncio.sleep(300)
+
+
+async def agent_resources(app):
+    """Следит за ресурсами и чистит если нужно."""
+    await asyncio.sleep(300)
+
+    while True:
+        try:
+            loop = asyncio.get_event_loop()
+
+            # Проверяем диск на mini-prod
+            disk_out, _, _ = await loop.run_in_executor(None, lambda:
+                pr("df -h / | awk 'NR==2{print $5}' | tr -d '%'"))
+            disk_pct = int(disk_out.strip()) if disk_out.strip().isdigit() else 0
+
+            if disk_pct > 80:
+                await app.bot.send_message(ADMIN_ID,
+                    f"АГЕНТ: Диск на mini-prod {disk_pct}% — чищу...",
+                    parse_mode="Markdown")
+                # Чистим неиспользуемые образы
+                cleaned, _, _ = await loop.run_in_executor(None, lambda:
+                    pr("docker system prune -f 2>&1 | tail -3"))
+                await app.bot.send_message(ADMIN_ID,
+                    f"АГЕНТ: Очистка диска завершена\n```\n{cleaned[:200]}\n```",
+                    parse_mode="Markdown")
+
+            # Проверяем RAM
+            ram_out, _, _ = await loop.run_in_executor(None, lambda:
+                pr("free | awk '/Mem/{printf \"%.0f\", $3/$2*100}'"))
+            ram_pct = int(ram_out.strip()) if ram_out.strip().isdigit() else 0
+
+            if ram_pct > 90:
+                await app.bot.send_message(ADMIN_ID,
+                    f"АГЕНТ: RAM на mini-prod {ram_pct}% — критично!\n"
+                    f"Используй /manage для управления контейнерами",
+                    parse_mode="Markdown")
+
+        except Exception as e:
+            log.warning(f"Agent resources error: {e}")
+        await asyncio.sleep(1800)  # каждые 30 минут
+
+
+@admin_only
+@admin_only
+async def cmd_agent(update, ctx):
+    """Управление автономным агентом."""
+    state = load_agent_state()
+    last_disc = state.get("last_discovery", "никогда")[:16] if state.get("last_discovery") else "никогда"
+    auto_dep = state.get("auto_deployed", [])
+    repaired = state.get("repaired", [])
+    blocked = state.get("blocked", [])
+
+    lines = [
+        "*Автономный агент*\n",
+        f"Последний поиск: _{last_disc}_",
+        f"Автодеплоев: _{len(auto_dep)}_",
+        f"Починено: _{len(repaired)}_",
+        f"Заблокировано: _{', '.join(blocked) if blocked else 'нет'}_\n",
+        "*Расписание:*",
+        "  Каждые 5 мин — проверка здоровья + авторемонт",
+        "  3:00 ночи — поиск и деплой новых сервисов",
+        "  4:00 вс — обновление образов",
+        "  Каждые 30 мин — мониторинг ресурсов",
+    ]
+    kb = InlineKeyboardMarkup([
+        [btn("Запустить поиск сейчас", "agent:discover:x")],
+        [btn("Сбросить историю ремонтов", "agent:reset_repairs:x")],
+        [btn("Показать заблокированные", "agent:blocked:x")],
+    ])
+    await update.message.reply_text("\n".join(lines), parse_mode="Markdown", reply_markup=kb)
+
+
+# ── AUTONOMOUS AGENT ──────────────────────────────────────────────────────
+# Этот модуль добавляется в bot_v7.py как дополнительные background tasks
+
+AGENT_STATE_KEY = "agent/state.json"
+REPAIR_ATTEMPTS = {}  # cname -> attempt_count
+
+def load_agent_state():
+    return mget("deployed", AGENT_STATE_KEY) or {
+        "last_discovery": None,
+        "last_trivy": None,
+        "last_disk_check": None,
+        "repaired": [],
+        "auto_deployed": [],
+        "blocked": [],  # сервисы которые не трогать
+    }
+
+def save_agent_state(state):
+    mput("deployed", AGENT_STATE_KEY, state)
+
+
+async def agent_heal(app):
+    """Следит за сервисами и сам чинит упавшие."""
+    await asyncio.sleep(120)  # даём боту стартовать
+    known = {}
+
+    while True:
+        try:
+            loop = asyncio.get_event_loop()
+            out, _, _ = await loop.run_in_executor(None, lambda:
+                pr("docker ps -a --format '{{.Names}}|{{.Status}}|{{.Image}}'"))
+
+            state = load_agent_state()
+            blocked = state.get("blocked", [])
+
+            for line in out.strip().splitlines():
+                if "|" not in line: continue
+                parts = line.split("|")
+                if len(parts) < 3: continue
+                name, status, image = parts[0], parts[1], parts[2]
+
+                if name in blocked: continue
+
+                was_up = known.get(name, True)
+                is_up = status.lower().startswith("up")
+                is_restarting = "restarting" in status.lower()
+
+                known[name] = is_up
+
+                # Сервис упал или в цикле рестартов
+                if (not is_up or is_restarting) and was_up:
+                    attempts = REPAIR_ATTEMPTS.get(name, 0)
+
+                    if attempts == 0:
+                        # Попытка 1: просто рестарт
+                        await app.bot.send_message(ADMIN_ID,
+                            f"АГЕНТ: `{name}` упал — пробую рестарт (попытка 1/3)",
+                            parse_mode="Markdown")
+                        _, _, code = await loop.run_in_executor(None, lambda n=name:
+                            pr(f"docker restart {n} 2>&1"))
+                        REPAIR_ATTEMPTS[name] = 1
+
+                    elif attempts == 1:
+                        # Попытка 2: смотрим логи и пробуем пересоздать
+                        logs, _, _ = await loop.run_in_executor(None, lambda n=name:
+                            pr(f"docker logs {n} --tail 20 2>&1"))
+
+                        await app.bot.send_message(ADMIN_ID,
+                            f"АГЕНТ: `{name}` всё ещё падает — пересоздаю (попытка 2/3)\n"
+                            f"Логи:\n```\n{logs[:400]}\n```",
+                            parse_mode="Markdown")
+
+                        # Получаем параметры контейнера
+                        inspect, _, _ = await loop.run_in_executor(None, lambda n=name:
+                            pr(f"docker inspect {n} 2>/dev/null"))
+                        try:
+                            info = json.loads(inspect)[0]
+                            config = info.get("Config", {})
+                            host_config = info.get("HostConfig", {})
+
+                            # Собираем команду запуска
+                            ports_bindings = host_config.get("PortBindings", {})
+                            pf = ""
+                            for container_port, bindings in ports_bindings.items():
+                                if bindings:
+                                    host_port = bindings[0].get("HostPort", "")
+                                    cp = container_port.split("/")[0]
+                                    pf += f" -p {host_port}:{cp}"
+
+                            binds = host_config.get("Binds", []) or []
+                            vf = " ".join(f"-v {b}" for b in binds)
+
+                            env_list = config.get("Env", []) or []
+                            ef = " ".join(f'-e "{e}"' for e in env_list if not e.startswith("PATH=") and not e.startswith("HOME="))
+
+                            restart_policy = host_config.get("RestartPolicy", {}).get("Name", "unless-stopped")
+
+                            # Удаляем и пересоздаём
+                            await loop.run_in_executor(None, lambda n=name:
+                                pr(f"docker rm -f {n} 2>/dev/null || true"))
+                            await asyncio.sleep(3)
+                            _, e, code = await loop.run_in_executor(None, lambda:
+                                pr(f"docker run -d --restart {restart_policy} --name {name} {pf} {ef} {vf} {image} 2>&1", 60))
+
+                            if code == 0:
+                                REPAIR_ATTEMPTS[name] = 2
+                            else:
+                                await app.bot.send_message(ADMIN_ID,
+                                    f"АГЕНТ: `{name}` не удалось пересоздать:\n```\n{e[:200]}\n```",
+                                    parse_mode="Markdown")
+                                REPAIR_ATTEMPTS[name] = 2
+                        except Exception as ex:
+                            log.warning(f"Agent repair inspect error: {ex}")
+                            REPAIR_ATTEMPTS[name] = 2
+
+                    elif attempts == 2:
+                        # Попытка 3: принудительное удаление и чистый деплой через SVC
+                        _, svc = find_svc(image)
+                        if svc:
+                            await app.bot.send_message(ADMIN_ID,
+                                f"АГЕНТ: `{name}` — финальная попытка, полный передеплой (3/3)",
+                                parse_mode="Markdown")
+                            await loop.run_in_executor(None, lambda n=name:
+                                pr(f"docker rm -f {n} 2>/dev/null || true"))
+                            await do_deploy(
+                                type('obj', (object,), {
+                                    'reply_text': lambda text, **kw: app.bot.send_message(ADMIN_ID, text, **kw)
+                                })(),
+                                svc["img"], "latest"
+                            )
+                            state["repaired"].append({"name": name, "ts": datetime.now().isoformat()})
+                            save_agent_state(state)
+                        else:
+                            await app.bot.send_message(ADMIN_ID,
+                                f"АГЕНТ: `{name}` — не знаю как починить, добавь в каталог\n"
+                                f"Образ: `{image}`",
+                                parse_mode="Markdown")
+                            blocked.append(name)
+                            state["blocked"] = blocked
+                            save_agent_state(state)
+                        REPAIR_ATTEMPTS[name] = 3
+
+                elif is_up and not was_up:
+                    # Восстановился
+                    if name in REPAIR_ATTEMPTS:
+                        attempts = REPAIR_ATTEMPTS.pop(name)
+                        await app.bot.send_message(ADMIN_ID,
+                            f"АГЕНТ: `{name}` восстановился (попытка {attempts})",
+                            parse_mode="Markdown")
+
+        except Exception as e:
+            log.warning(f"Agent heal error: {e}")
+        await asyncio.sleep(300)
+
+
+async def agent_discovery(app):
+    """Ночной поиск и деплой новых сервисов."""
+    await asyncio.sleep(180)
+
+    while True:
+        try:
+            now = datetime.now()
+            state = load_agent_state()
+            last = state.get("last_discovery")
+            last_dt = datetime.fromisoformat(last) if last else None
+
+            # Запускаем в 3:00 ночи, раз в сутки
+            should_run = (now.hour == 3 and now.minute < 5 and
+                         (last_dt is None or (now - last_dt).days >= 1))
+
+            if should_run:
+                await app.bot.send_message(ADMIN_ID,
+                    "АГЕНТ: Ночной поиск новых сервисов запущен...",
+                    parse_mode="Markdown")
+
+                seen = load_seen()
+                candidates = [(n, v) for n, v in SVC.items() if n.lower() not in seen][:5]
+
+                if not candidates:
+                    await app.bot.send_message(ADMIN_ID,
+                        "АГЕНТ: Все сервисы из каталога уже просмотрены",
+                        parse_mode="Markdown")
+                else:
+                    deployed_auto = []
+                    failed_auto = []
+                    loop = asyncio.get_event_loop()
+
+                    for name, svc in candidates:
+                        img = svc["img"]
+                        pl = []
+                        with concurrent.futures.ThreadPoolExecutor() as pool:
+                            result = await loop.run_in_executor(pool, pipeline, img, "latest", pl)
+
+                        score = result["score"]
+                        crit = result["metrics"].get("crit", 0)
+                        save_seen([name])
+
+                        if result["status"] == "pass" and score >= 75 and crit == 0:
+                            await do_deploy(
+                                type('obj', (object,), {
+                                    'reply_text': lambda text, **kw: app.bot.send_message(ADMIN_ID, text, **kw)
+                                })(),
+                                img, "latest"
+                            )
+                            deployed_auto.append(f"`{img}` ({score}/100)")
+                        else:
+                            reason = f"CRIT:{crit}" if crit > 0 else f"score:{score}/100"
+                            failed_auto.append(f"`{img}` — {reason}")
+                        await asyncio.sleep(2)
+
+                    state["last_discovery"] = now.isoformat()
+                    state["auto_deployed"].extend(deployed_auto)
+                    save_agent_state(state)
+
+                    lines = ["АГЕНТ: Ночной поиск завершён\n"]
+                    if deployed_auto:
+                        lines += ["*Задеплоено:*"] + [f"  OK {x}" for x in deployed_auto]
+                    if failed_auto:
+                        lines += ["Propushcheno:"] + [f"  FAIL {x}" for x in failed_auto]
+                    await app.bot.send_message(ADMIN_ID, "\n".join(lines), parse_mode="Markdown")
+
+                await asyncio.sleep(300)
+            else:
+                await asyncio.sleep(60)
+
+        except Exception as e:
+            log.warning(f"Agent discovery error: {e}")
+            await asyncio.sleep(60)
+
+
+async def agent_updater(app):
+    """Следит за обновлениями образов и обновляет автоматически."""
+    await asyncio.sleep(240)
+
+    while True:
+        try:
+            now = datetime.now()
+            # Раз в воскресенье в 4:00
+            if now.weekday() == 6 and now.hour == 4 and now.minute < 5:
+                loop = asyncio.get_event_loop()
+                out, _, _ = await loop.run_in_executor(None, lambda:
+                    pr("docker ps --format '{{.Names}}|{{.Image}}'"))
+
+                await app.bot.send_message(ADMIN_ID,
+                    "АГЕНТ: Проверяю обновления образов...",
+                    parse_mode="Markdown")
+
+                updated = []
+                failed = []
+
+                for line in out.strip().splitlines():
+                    if "|" not in line: continue
+                    name, image = line.split("|", 1)
+                    if ":" in image:
+                        img_name, tag = image.rsplit(":", 1)
+                    else:
+                        img_name, tag = image, "latest"
+
+                    # Пуллим новый образ
+                    old_id, _, _ = await loop.run_in_executor(None, lambda i=image:
+                        sb(f"docker image inspect {i} --format '{{{{.Id}}}}' 2>/dev/null"))
+                    await loop.run_in_executor(None, lambda i=image:
+                        sb(f"docker pull {i} 2>/dev/null", 120))
+                    new_id, _, _ = await loop.run_in_executor(None, lambda i=image:
+                        sb(f"docker image inspect {i} --format '{{{{.Id}}}}' 2>/dev/null"))
+
+                    if old_id.strip() != new_id.strip() and new_id.strip():
+                        # Образ обновился — сохраняем rollback и рестартим
+                        await loop.run_in_executor(None, lambda n=name, i=image:
+                            pr(f"echo '{i}' | sudo tee /opt/homelab/rollback_{n}.txt >/dev/null"))
+                        _, _, code = await loop.run_in_executor(None, lambda n=name:
+                            pr(f"docker restart {n} 2>&1"))
+                        await asyncio.sleep(10)
+                        state_out, _, _ = await loop.run_in_executor(None, lambda n=name:
+                            pr(f"docker inspect {n} --format '{{{{.State.Running}}}}' 2>/dev/null"))
+
+                        if "true" in state_out.lower():
+                            updated.append(f"`{name}` — {img_name}:{tag}")
+                        else:
+                            # Откат
+                            await loop.run_in_executor(None, lambda n=name, i=image:
+                                pr(f"docker rm -f {n} && docker run -d --restart unless-stopped --name {n} {i} 2>&1", 60))
+                            failed.append(f"`{name}` — обновление сломало, откат")
+
+                if updated or failed:
+                    lines = ["АГЕНТ: Обновление образов\n"]
+                    if updated: lines += ["*Обновлено:*"] + [f"  OK {x}" for x in updated]
+                    if failed: lines += ["\n*Откат:*"] + [f"  WARN {x}" for x in failed]
+                    await app.bot.send_message(ADMIN_ID, "\n".join(lines), parse_mode="Markdown")
+                else:
+                    await app.bot.send_message(ADMIN_ID,
+                        "АГЕНТ: Все образы актуальны", parse_mode="Markdown")
+
+                await asyncio.sleep(3600)
+            else:
+                await asyncio.sleep(300)
+
+        except Exception as e:
+            log.warning(f"Agent updater error: {e}")
+            await asyncio.sleep(300)
+
+
+async def agent_resources(app):
+    """Следит за ресурсами и чистит если нужно."""
+    await asyncio.sleep(300)
+
+    while True:
+        try:
+            loop = asyncio.get_event_loop()
+
+            # Проверяем диск на mini-prod
+            disk_out, _, _ = await loop.run_in_executor(None, lambda:
+                pr("df -h / | awk 'NR==2{print $5}' | tr -d '%'"))
+            disk_pct = int(disk_out.strip()) if disk_out.strip().isdigit() else 0
+
+            if disk_pct > 80:
+                await app.bot.send_message(ADMIN_ID,
+                    f"АГЕНТ: Диск на mini-prod {disk_pct}% — чищу...",
+                    parse_mode="Markdown")
+                # Чистим неиспользуемые образы
+                cleaned, _, _ = await loop.run_in_executor(None, lambda:
+                    pr("docker system prune -f 2>&1 | tail -3"))
+                await app.bot.send_message(ADMIN_ID,
+                    f"АГЕНТ: Очистка диска завершена\n```\n{cleaned[:200]}\n```",
+                    parse_mode="Markdown")
+
+            # Проверяем RAM
+            ram_out, _, _ = await loop.run_in_executor(None, lambda:
+                pr("free | awk '/Mem/{printf \"%.0f\", $3/$2*100}'"))
+            ram_pct = int(ram_out.strip()) if ram_out.strip().isdigit() else 0
+
+            if ram_pct > 90:
+                await app.bot.send_message(ADMIN_ID,
+                    f"АГЕНТ: RAM на mini-prod {ram_pct}% — критично!\n"
+                    f"Используй /manage для управления контейнерами",
+                    parse_mode="Markdown")
+
+        except Exception as e:
+            log.warning(f"Agent resources error: {e}")
+        await asyncio.sleep(1800)  # каждые 30 минут
+
+
+@admin_only
+async def cmd_agent(update, ctx):
+    """Управление автономным агентом."""
+    state = load_agent_state()
+    last_disc = state.get("last_discovery", "никогда")[:16] if state.get("last_discovery") else "никогда"
+    auto_dep = state.get("auto_deployed", [])
+    repaired = state.get("repaired", [])
+    blocked = state.get("blocked", [])
+
+    lines = [
+        "*Автономный агент*\n",
+        f"Последний поиск: _{last_disc}_",
+        f"Автодеплоев: _{len(auto_dep)}_",
+        f"Починено: _{len(repaired)}_",
+        f"Заблокировано: _{', '.join(blocked) if blocked else 'нет'}_\n",
+        "*Расписание:*",
+        "  Каждые 5 мин — проверка здоровья + авторемонт",
+        "  3:00 ночи — поиск и деплой новых сервисов",
+        "  4:00 вс — обновление образов",
+        "  Каждые 30 мин — мониторинг ресурсов",
+    ]
+    kb = InlineKeyboardMarkup([
+        [btn("Запустить поиск сейчас", "agent:discover:x")],
+        [btn("Сбросить историю ремонтов", "agent:reset_repairs:x")],
+        [btn("Показать заблокированные", "agent:blocked:x")],
+    ])
+    await update.message.reply_text("\n".join(lines), parse_mode="Markdown", reply_markup=kb)
+
+
+
+REPAIR_ATTEMPTS = {}
+AGENT_STATE_KEY = "agent/state.json"
+
+def load_agent_state():
+    return mget("deployed", AGENT_STATE_KEY) or {
+        "last_discovery": None, "repaired": [], "auto_deployed": [], "blocked": []
+    }
+
+def save_agent_state(state):
+    mput("deployed", AGENT_STATE_KEY, state)
+
+async def agent_heal(app):
+    await asyncio.sleep(120)
+    known = {}
+    while True:
+        try:
+            loop = asyncio.get_event_loop()
+            out,_,_ = await loop.run_in_executor(None, lambda: pr("docker ps -a --format '{{.Names}}|{{.Status}}|{{.Image}}'"))
+            state = load_agent_state()
+            blocked = state.get("blocked", [])
+            for line in out.strip().splitlines():
+                if "|" not in line: continue
+                parts = line.split("|")
+                if len(parts) < 3: continue
+                name, status, image = parts[0], parts[1], parts[2]
+                if name in blocked: continue
+                was_up = known.get(name, True)
+                is_up = status.lower().startswith("up")
+                is_restart = "restarting" in status.lower()
+                known[name] = is_up
+                if (not is_up or is_restart) and was_up:
+                    att = REPAIR_ATTEMPTS.get(name, 0)
+                    if att == 0:
+                        await app.bot.send_message(ADMIN_ID, f"AGENT: `{name}` упал - рестарт 1/3", parse_mode="Markdown")
+                        await loop.run_in_executor(None, lambda n=name: pr(f"docker restart {n} 2>&1"))
+                        REPAIR_ATTEMPTS[name] = 1
+                    elif att == 1:
+                        logs,_,_ = await loop.run_in_executor(None, lambda n=name: pr(f"docker logs {n} --tail 15 2>&1"))
+                        await app.bot.send_message(ADMIN_ID, f"AGENT: `{name}` падает - пересоздаю 2/3", parse_mode="Markdown")
+                        inspect,_,_ = await loop.run_in_executor(None, lambda n=name: pr(f"docker inspect {n} 2>/dev/null"))
+                        try:
+                            info = json.loads(inspect)[0]
+                            hc = info.get("HostConfig", {})
+                            pb = hc.get("PortBindings", {})
+                            pf = " ".join(f"-p {b[0].get('HostPort','')}:{cp.split('/')[0]}" for cp,b in pb.items() if b)
+                            binds = hc.get("Binds", []) or []
+                            vf = " ".join(f"-v {b}" for b in binds)
+                            rp = hc.get("RestartPolicy", {}).get("Name", "unless-stopped")
+                            await loop.run_in_executor(None, lambda n=name: pr(f"docker rm -f {n} 2>/dev/null || true"))
+                            await asyncio.sleep(3)
+                            _,e2,code = await loop.run_in_executor(None, lambda: pr(f"docker run -d --restart {rp} --name {name} {pf} {vf} {image} 2>&1", 60))
+                            if code != 0:
+                                await app.bot.send_message(ADMIN_ID, f"AGENT: `{name}` не удалось: {e2[:100]}", parse_mode="Markdown")
+                        except Exception as ex:
+                            log.warning(f"Agent repair: {ex}")
+                        REPAIR_ATTEMPTS[name] = 2
+                    elif att == 2:
+                        _,svc = find_svc(image)
+                        if svc:
+                            await app.bot.send_message(ADMIN_ID, f"AGENT: `{name}` - передеплой 3/3", parse_mode="Markdown")
+                            await loop.run_in_executor(None, lambda n=name: pr(f"docker rm -f {n} 2>/dev/null || true"))
+                            await do_deploy(type("M",(object,),{"reply_text": lambda t,**k: app.bot.send_message(ADMIN_ID,t,**k)})(), svc["img"], "latest")
+                            state["repaired"].append({"name": name, "ts": datetime.now().isoformat()})
+                            save_agent_state(state)
+                        else:
+                            await app.bot.send_message(ADMIN_ID, f"AGENT: `{name}` не знаю как чинить, образ: `{image}`", parse_mode="Markdown")
+                            blocked.append(name); state["blocked"] = blocked; save_agent_state(state)
+                        REPAIR_ATTEMPTS[name] = 3
+                elif is_up and not was_up:
+                    if name in REPAIR_ATTEMPTS:
+                        a = REPAIR_ATTEMPTS.pop(name)
+                        await app.bot.send_message(ADMIN_ID, f"AGENT: `{name}` восстановился (попытка {a})", parse_mode="Markdown")
+        except Exception as e:
+            log.warning(f"Agent heal: {e}")
+        await asyncio.sleep(300)
+
+async def agent_discovery(app):
+    await asyncio.sleep(180)
+    while True:
+        try:
+            now = datetime.now()
+            state = load_agent_state()
+            last = state.get("last_discovery")
+            last_dt = datetime.fromisoformat(last) if last else None
+            should_run = (now.hour == 3 and now.minute < 5 and (last_dt is None or (now-last_dt).days >= 1))
+            if should_run:
+                await app.bot.send_message(ADMIN_ID, "AGENT: Ночной поиск запущен", parse_mode="Markdown")
+                seen = load_seen()
+                candidates = [(n,v) for n,v in SVC.items() if n.lower() not in seen][:5]
+                dep = []; fail = []
+                loop = asyncio.get_event_loop()
+                for name, svc in candidates:
+                    img = svc["img"]; pl = []
+                    with concurrent.futures.ThreadPoolExecutor() as pool:
+                        result = await loop.run_in_executor(pool, pipeline, img, "latest", pl)
+                    score = result["score"]; crit = result["metrics"].get("crit", 0)
+                    save_seen([name])
+                    if result["status"] == "pass" and score >= 75 and crit == 0:
+                        await do_deploy(type("M",(object,),{"reply_text": lambda t,**k: app.bot.send_message(ADMIN_ID,t,**k)})(), img, "latest")
+                        dep.append(f"`{img}` ({score}/100)")
+                    else:
+                        fail.append(f"`{img}` - CRIT:{crit}" if crit>0 else f"`{img}` - score:{score}")
+                    await asyncio.sleep(2)
+                state["last_discovery"] = now.isoformat()
+                state["auto_deployed"].extend(dep)
+                save_agent_state(state)
+                msg_parts = ["AGENT: Поиск завершён"]
+                if dep: msg_parts += ["Задеплоено:"] + [f"  OK {x}" for x in dep]
+                if fail: msg_parts += ["Пропущено:"] + [f"  FAIL {x}" for x in fail]
+                await app.bot.send_message(ADMIN_ID, chr(10).join(msg_parts), parse_mode="Markdown")
+                await asyncio.sleep(300)
+            else:
+                await asyncio.sleep(60)
+        except Exception as e:
+            log.warning(f"Agent discovery: {e}"); await asyncio.sleep(60)
+
+async def agent_updater(app):
+    await asyncio.sleep(240)
+    while True:
+        try:
+            now = datetime.now()
+            if now.weekday() == 6 and now.hour == 4 and now.minute < 5:
+                loop = asyncio.get_event_loop()
+                out,_,_ = await loop.run_in_executor(None, lambda: pr("docker ps --format '{{.Names}}|{{.Image}}'"))
+                await app.bot.send_message(ADMIN_ID, "AGENT: Проверяю обновления", parse_mode="Markdown")
+                updated = []; failed_up = []
+                for line in out.strip().splitlines():
+                    if "|" not in line: continue
+                    name, image = line.split("|", 1)
+                    old_id,_,_ = await loop.run_in_executor(None, lambda i=image: sb(f"docker image inspect {i} --format '{{{{.Id}}}}' 2>/dev/null"))
+                    await loop.run_in_executor(None, lambda i=image: sb(f"docker pull {i} 2>/dev/null", 120))
+                    new_id,_,_ = await loop.run_in_executor(None, lambda i=image: sb(f"docker image inspect {i} --format '{{{{.Id}}}}' 2>/dev/null"))
+                    if old_id.strip() != new_id.strip() and new_id.strip():
+                        _,_,code = await loop.run_in_executor(None, lambda n=name: pr(f"docker restart {n} 2>&1"))
+                        await asyncio.sleep(10)
+                        s2,_,_ = await loop.run_in_executor(None, lambda n=name: pr(f"docker inspect {n} --format '{{{{.State.Running}}}}' 2>/dev/null"))
+                        if "true" in s2.lower():
+                            updated.append(f"`{name}`")
+                        else:
+                            failed_up.append(f"`{name}`")
+                            await loop.run_in_executor(None, lambda n=name,i=image: pr(f"docker rm -f {n} && docker run -d --restart unless-stopped --name {n} {i} 2>&1", 60))
+                msg_parts = ["AGENT: Обновления"]
+                if updated: msg_parts += ["OK:"] + [f"  {x}" for x in updated]
+                if failed_up: msg_parts += ["Откат:"] + [f"  {x}" for x in failed_up]
+                if not updated and not failed_up: msg_parts.append("Все актуальны")
+                await app.bot.send_message(ADMIN_ID, chr(10).join(msg_parts), parse_mode="Markdown")
+                await asyncio.sleep(3600)
+            else:
+                await asyncio.sleep(300)
+        except Exception as e:
+            log.warning(f"Agent updater: {e}"); await asyncio.sleep(300)
+
+async def agent_resources(app):
+    await asyncio.sleep(300)
+    while True:
+        try:
+            loop = asyncio.get_event_loop()
+            disk_out,_,_ = await loop.run_in_executor(None, lambda: pr("df / | awk 'NR==2{print $5}' | tr -d '%'"))
+            disk_pct = int(disk_out.strip()) if disk_out.strip().isdigit() else 0
+            if disk_pct > 80:
+                await app.bot.send_message(ADMIN_ID, f"AGENT: Диск {disk_pct}% - чищу", parse_mode="Markdown")
+                cleaned,_,_ = await loop.run_in_executor(None, lambda: pr("docker system prune -f 2>&1 | tail -3"))
+                await app.bot.send_message(ADMIN_ID, f"AGENT: Очистка: {cleaned[:150]}", parse_mode="Markdown")
+            ram_out,_,_ = await loop.run_in_executor(None, lambda: pr("free | awk '/Mem/{printf \"%.0f\", $3/$2*100}'"))
+            ram_pct = int(ram_out.strip()) if ram_out.strip().isdigit() else 0
+            if ram_pct > 90:
+                await app.bot.send_message(ADMIN_ID, f"AGENT: RAM {ram_pct}% критично! /manage", parse_mode="Markdown")
+        except Exception as e:
+            log.warning(f"Agent resources: {e}")
+        await asyncio.sleep(1800)
+
+@admin_only
+async def cmd_agent(update, ctx):
+    state = load_agent_state()
+    last = state.get("last_discovery", "")
+    last_disc = last[:16] if last else "никогда"
+    msg_text = chr(10).join([
+        "*Автономный агент v7*",
+        f"Последний поиск: _{last_disc}_",
+        f"Автодеплоев: _{len(state.get('auto_deployed',[]))}_",
+        f"Починено: _{len(state.get('repaired',[]))}_",
+        "",
+        "*Расписание:*",
+        "  Каждые 5 мин - здоровье + авторемонт",
+        "  3:00 ночи - поиск + деплой",
+        "  4:00 вс - обновление образов",
+        "  Каждые 30 мин - ресурсы",
+    ])
+    kb = InlineKeyboardMarkup([
+        [btn("Поиск прямо сейчас", "agent:discover:x")],
+        [btn("Сброс ремонтов", "agent:reset_repairs:x"), btn("Заблокированные", "agent:blocked:x")],
+    ])
+    await update.message.reply_text(msg_text, parse_mode="Markdown", reply_markup=kb)
+
+
 async def post_init(app):
     asyncio.create_task(background_monitor(app))
     asyncio.create_task(background_digest(app))
     asyncio.create_task(run_api_server(app))
-    log.info("Background tasks started")
+    asyncio.create_task(agent_heal(app))
+    asyncio.create_task(agent_discovery(app))
+    asyncio.create_task(agent_updater(app))
+    asyncio.create_task(agent_resources(app))
+    log.info("Background tasks + Agent started")
 
 async def error_handler(update, context):
     log.error(f"Error: {context.error}", exc_info=True)
@@ -1392,6 +2460,9 @@ def main():
     app.add_handler(CommandHandler("dashboard", cmd_dashboard))
     app.add_handler(CommandHandler("test",      cmd_test))
     app.add_handler(CommandHandler("reset",     cmd_reset))
+    app.add_handler(CommandHandler("agent",     cmd_agent))
+    app.add_handler(CommandHandler("agent",     cmd_agent))
+    app.add_handler(CommandHandler("agent",     cmd_agent))
     app.add_handler(CallbackQueryHandler(on_callback))
     app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
